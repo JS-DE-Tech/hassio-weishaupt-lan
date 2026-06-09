@@ -16,6 +16,12 @@ from .sensors import WeishauptSensorDefinition
 
 _LOGGER = logging.getLogger(__name__)
 
+DEBUG_STATE_KEYS = {
+    "hk3_betriebsart_vorgabe",
+    "sg_systembetriebsart",
+    "wtc_abgastemperatur",
+}
+
 
 class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator to manage fetching data from Weishaupt device."""
@@ -67,5 +73,37 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Connection error: {err}") from err
         except WeishauptApiError as err:
             raise UpdateFailed(f"API error: {err}") from err
+
+        definitions_by_key = {
+            sensor_def.key: sensor_def for sensor_def in self.polled_sensor_definitions
+        }
+        for key in DEBUG_STATE_KEYS:
+            sensor_def = definitions_by_key.get(key)
+            if sensor_def is None:
+                continue
+            data = results.get(key)
+            if data is None:
+                _LOGGER.debug(
+                    "Coordinator refresh missing key=%s MI=0x%02x MX=0x%02x OX=0x%04x OS=0x%02x VS=%s",
+                    key,
+                    sensor_def.mi,
+                    sensor_def.mx,
+                    sensor_def.ox,
+                    sensor_def.os,
+                    sensor_def.vs,
+                )
+                continue
+            _LOGGER.debug(
+                "Coordinator refresh key=%s MI=0x%02x MX=0x%02x OX=0x%04x OS=0x%02x VS=%s response VG=%s raw_value_hex=%s raw_value_int=%s",
+                key,
+                sensor_def.mi,
+                sensor_def.mx,
+                sensor_def.ox,
+                sensor_def.os,
+                sensor_def.vs,
+                data.get("vg", ""),
+                data.get("value_hex", ""),
+                data.get("value_int"),
+            )
 
         return results

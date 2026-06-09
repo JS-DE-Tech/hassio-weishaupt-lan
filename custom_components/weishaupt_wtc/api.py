@@ -24,6 +24,9 @@ REQUEST_ID = "12345678"
 MAX_PARAMS_PER_REQUEST = 10  # Weishaupt supports up to 10 VG frames per request
 
 
+VG_ADDRESS_FIELDS = ("mi", "mx", "ox", "os", "vs")
+
+
 class WeishauptApiError(Exception):
     """Exception for Weishaupt API errors."""
 
@@ -85,6 +88,7 @@ def parse_vg_response(vg: str) -> dict[str, Any]:
     value_int = int(value_hex, 16) if value_hex else 0
 
     return {
+        "vg": vg,
         "cmd": cmd,
         "mi": mi,
         "mx": mx,
@@ -94,6 +98,39 @@ def parse_vg_response(vg: str) -> dict[str, Any]:
         "value_hex": value_hex,
         "value_int": value_int,
     }
+
+
+def _param_address(param: dict[str, Any]) -> tuple[int, int, int, int, int]:
+    """Return the VG address tuple for a requested parameter."""
+    return tuple(int(param[field]) for field in VG_ADDRESS_FIELDS)
+
+
+def _parsed_address(parsed: dict[str, Any]) -> tuple[int, int, int, int, int]:
+    """Return the VG address tuple for a parsed response."""
+    return tuple(int(parsed[field]) for field in VG_ADDRESS_FIELDS)
+
+
+def _format_address(values: dict[str, Any]) -> str:
+    """Format a VG address for diagnostic logging."""
+    return (
+        f"MI=0x{int(values['mi']):02x} "
+        f"MX=0x{int(values['mx']):02x} "
+        f"OX=0x{int(values['ox']):04x} "
+        f"OS=0x{int(values['os']):02x} "
+        f"VS={int(values['vs'])}"
+    )
+
+
+def _response_frame_keys(response_capi: dict[str, Any]) -> list[str]:
+    """Return response frame keys in numeric order, excluding NN."""
+    return sorted(
+        (
+            key
+            for key in response_capi
+            if key.startswith("N") and key[1:].isdigit()
+        ),
+        key=lambda item: int(item[1:]),
+    )
 
 
 class WeishauptApiClient:
@@ -196,6 +233,8 @@ class WeishauptApiClient:
         for batch_start in range(0, len(params), MAX_PARAMS_PER_REQUEST):
             batch = params[batch_start : batch_start + MAX_PARAMS_PER_REQUEST]
             capi = {"NN": len(batch)}
+            address_to_param = {_param_address(param): param for param in batch}
+            matched_keys: set[str] = set()
 
             for i, param in enumerate(batch):
                 vg = build_read_vg(
@@ -206,6 +245,13 @@ class WeishauptApiClient:
                     vs=param["vs"],
                 )
                 capi[f"N{i + 1:02d}"] = {"VG": vg}
+                _LOGGER.debug(
+                    "Read request %s key=%s %s VG=%s",
+                    f"N{i + 1:02d}",
+                    param.get("key", ""),
+                    _format_address(param),
+                    vg,
+                )
 
             payload = {
                 "ID": REQUEST_ID,
@@ -228,14 +274,10 @@ class WeishauptApiClient:
                 continue
 
             response_capi = response["CAPI"]
-            for i, param in enumerate(batch):
-                key = f"N{i + 1:02d}"
-                if key not in response_capi:
-                    _LOGGER.debug("Missing %s in response", key)
-                    continue
-
-                vg_str = response_capi[key].get("VG", "")
+            for response_key in _response_frame_keys(response_capi):
+                vg_str = response_capi[response_key].get("VG", "")
                 if not vg_str:
+                    _LOGGER.debug("No VG in response for %s", response_key)
                     continue
 
                 try:
@@ -243,7 +285,7 @@ class WeishauptApiClient:
                 except (ValueError, WeishauptApiError) as err:
                     _LOGGER.debug(
                         "Failed to parse VG response for %s: %s",
-                        param.get("key", key),
+                        response_key,
                         err,
                     )
                     continue
@@ -251,15 +293,48 @@ class WeishauptApiClient:
                 # Check for error response
                 if parsed["cmd"] == CMD_ERROR:
                     _LOGGER.debug(
-                        "Error response for %s: %s",
-                        param.get("key", key),
+                        "Error response for %s %s response VG=%s raw_value_hex=%s raw_value_int=%s",
+                        response_key,
+                        _format_address(parsed),
                         vg_str,
+                        parsed.get("value_hex", ""),
+                        parsed.get("value_int"),
                     )
                     continue
 
                 # Check it's a proper response
                 if parsed["cmd"] == CMD_RESPONSE:
+                    param = address_to_param.get(_parsed_address(parsed))
+                    if param is None:
+                        _LOGGER.debug(
+                            "Unmatched read response %s %s response VG=%s raw_value_hex=%s raw_value_int=%s",
+                            response_key,
+                            _format_address(parsed),
+                            vg_str,
+                            parsed.get("value_hex", ""),
+                            parsed.get("value_int"),
+                        )
+                        continue
+
                     results[param["key"]] = parsed
+                    matched_keys.add(param["key"])
+                    _LOGGER.debug(
+                        "Read response %s key=%s %s response VG=%s raw_value_hex=%s raw_value_int=%s",
+                        response_key,
+                        param["key"],
+                        _format_address(parsed),
+                        vg_str,
+                        parsed.get("value_hex", ""),
+                        parsed.get("value_int"),
+                    )
+
+            for param in batch:
+                if param["key"] not in matched_keys:
+                    _LOGGER.debug(
+                        "Missing read response for key=%s %s",
+                        param["key"],
+                        _format_address(param),
+                    )
 
         return results
 

@@ -459,6 +459,38 @@ class SensorDeviceInfoTests(unittest.TestCase):
             )
             self.assertTrue(select_entity._attr_unique_id.endswith("_select"))
 
+    def test_confirmed_device_frames_render_expected_entity_states(self) -> None:
+        """Confirmed raw responses should render the expected HA states."""
+        hk1_def = sensor_by_key("sg_betriebsart_hk1_vorgabe")
+        hk2_def = heating_circuits.build_hk_sensor_definitions(2, 0x01)[0]
+        hk3_def = heating_circuits.build_hk_sensor_definitions(3, 0x02)[0]
+        system_def = sensor_by_key("sg_systembetriebsart")
+        abgas_def = sensor_by_key("wtc_abgastemperatur")
+        coordinator = SimpleNamespace(
+            data={
+                hk1_def.key: {"value_int": 2, "value_hex": "02"},
+                hk2_def.key: {"value_int": 2, "value_hex": "02"},
+                hk3_def.key: {"value_int": 2, "value_hex": "02"},
+                system_def.key: {"value_int": 2, "value_hex": "02"},
+                abgas_def.key: {"value_int": 407, "value_hex": "0197"},
+            },
+            heating_circuit_names={},
+        )
+        entry = SimpleNamespace(entry_id="entry-123")
+
+        hk1_select = select.WeishauptSelectEntity(coordinator, hk1_def, entry)
+        hk2_select = select.WeishauptSelectEntity(coordinator, hk2_def, entry)
+        hk3_select = select.WeishauptSelectEntity(coordinator, hk3_def, entry)
+        system_select = select.WeishauptSelectEntity(coordinator, system_def, entry)
+        abgas_sensor = sensor.WeishauptSensorEntity(coordinator, abgas_def, entry)
+
+        self.assertEqual(hk1_select.current_option, "Zeitprogramm 1")
+        self.assertEqual(hk2_select.current_option, "Zeitprogramm 1")
+        self.assertEqual(hk3_select.current_option, "Zeitprogramm 1")
+        self.assertEqual(system_select.current_option, "Sommer")
+        self.assertTrue(abgas_sensor.available)
+        self.assertEqual(abgas_sensor.native_value, 40.7)
+
 
 if __name__ == "__main__":
     unittest.main()
