@@ -95,9 +95,32 @@ class ResponseClient(api.WeishauptApiClient):
         return self.response
 
 
+class SequenceResponseClient(api.WeishauptApiClient):
+    """API client test double returning one response per request."""
+
+    def __init__(self, responses: list[dict | None]) -> None:
+        super().__init__("wem-sg", "admin", "Admin123")
+        self.responses = list(responses)
+        self.payloads: list[dict] = []
+
+    async def _post(self, payload: dict) -> dict | None:
+        """Capture the payload and return the next configured response."""
+        self.payloads.append(payload)
+        return self.responses.pop(0)
+
+
 def capi_response(vg: str) -> dict:
     """Build a minimal CanApiJson response."""
     return {"CAPI": {"N01": {"VG": vg}}}
+
+
+def capi_batch_response(vgs: list[str | None]) -> dict:
+    """Build a CanApiJson response with optional missing VG slots."""
+    capi = {"NN": len(vgs)}
+    for index, frame in enumerate(vgs, start=1):
+        if frame is not None:
+            capi[f"N{index:02d}"] = {"VG": frame}
+    return {"CAPI": capi}
 
 
 def vg(cmd: int, mi: int, mx: int, ox: int, os_val: int, vs: int) -> str:
@@ -110,6 +133,66 @@ def vg_with_value(
 ) -> str:
     """Build a minimal response VG with value bytes."""
     return f"{vg(cmd, mi, mx, ox, os_val, vs)}{value:0{vs * 2}x}"
+
+
+CONFIRMED_HK1_RESPONSE = "020200253302000102"
+CONFIRMED_HK2_RESPONSE = "020201253302000102"
+CONFIRMED_HK3_RESPONSE = "020202253302000102"
+CONFIRMED_SYSTEM_RESPONSE = "020100261e00000102"
+CONFIRMED_ABGAS_RESPONSE = "02070025330200020197"
+
+
+CONFIRMED_PARAMS = [
+    {
+        "key": "sg_betriebsart_hk1_vorgabe",
+        "mi": 0x02,
+        "mx": 0x00,
+        "ox": 0x2533,
+        "os": 0x02,
+        "vs": 1,
+    },
+    {
+        "key": "hk_betriebsart_vorgabe",
+        "mi": 0x02,
+        "mx": 0x01,
+        "ox": 0x2533,
+        "os": 0x02,
+        "vs": 1,
+    },
+    {
+        "key": "hk3_betriebsart_vorgabe",
+        "mi": 0x02,
+        "mx": 0x02,
+        "ox": 0x2533,
+        "os": 0x02,
+        "vs": 1,
+    },
+    {
+        "key": "sg_systembetriebsart",
+        "mi": 0x01,
+        "mx": 0x00,
+        "ox": 0x261E,
+        "os": 0x00,
+        "vs": 1,
+    },
+    {
+        "key": "wtc_abgastemperatur",
+        "mi": 0x07,
+        "mx": 0x00,
+        "ox": 0x2533,
+        "os": 0x02,
+        "vs": 2,
+    },
+]
+
+
+CONFIRMED_RESPONSES = [
+    CONFIRMED_HK1_RESPONSE,
+    CONFIRMED_HK2_RESPONSE,
+    CONFIRMED_HK3_RESPONSE,
+    CONFIRMED_SYSTEM_RESPONSE,
+    CONFIRMED_ABGAS_RESPONSE,
+]
 
 
 class ApiClientTests(unittest.IsolatedAsyncioTestCase):
@@ -166,6 +249,138 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
 
         sent_vg = client.payloads[0]["CAPI"]["N01"]["VG"]
         self.assertEqual(sent_vg[2:6], "0202")
+
+    async def test_read_parameters_decodes_confirmed_real_frames(self) -> None:
+        """Confirmed device responses should populate all expected data keys."""
+        client = ResponseClient(capi_batch_response(CONFIRMED_RESPONSES))
+
+        result = await client.read_parameters(CONFIRMED_PARAMS)
+
+        self.assertEqual(
+            result["sg_betriebsart_hk1_vorgabe"]["value_int"],
+            2,
+        )
+        self.assertEqual(result["hk_betriebsart_vorgabe"]["value_int"], 2)
+        self.assertEqual(result["hk3_betriebsart_vorgabe"]["value_int"], 2)
+        self.assertEqual(result["sg_systembetriebsart"]["value_int"], 2)
+        self.assertEqual(result["wtc_abgastemperatur"]["value_int"], 407)
+        self.assertEqual(result["wtc_abgastemperatur"]["value_hex"], "0197")
+
+        request_capi = client.payloads[0]["CAPI"]
+        self.assertEqual(request_capi["NN"], 5)
+        self.assertEqual(
+            [key for key in request_capi if key.startswith("N")],
+            ["NN", "N01", "N02", "N03", "N04", "N05"],
+        )
+        self.assertEqual(request_capi["N01"]["VG"], "010200253302000100")
+        self.assertEqual(request_capi["N02"]["VG"], "010201253302000100")
+        self.assertEqual(request_capi["N03"]["VG"], "010202253302000100")
+        self.assertEqual(request_capi["N04"]["VG"], "010100261e00000100")
+        self.assertEqual(request_capi["N05"]["VG"], "01070025330200020000")
+
+    async def test_read_parameters_maps_reordered_confirmed_batch_by_address(
+        self,
+    ) -> None:
+        """Response slot order should not change the key receiving each value."""
+        client = ResponseClient(
+            capi_batch_response(
+                [
+                    CONFIRMED_ABGAS_RESPONSE,
+                    CONFIRMED_SYSTEM_RESPONSE,
+                    CONFIRMED_HK3_RESPONSE,
+                    CONFIRMED_HK2_RESPONSE,
+                    CONFIRMED_HK1_RESPONSE,
+                ]
+            )
+        )
+
+        result = await client.read_parameters(CONFIRMED_PARAMS)
+
+        self.assertEqual(result["sg_betriebsart_hk1_vorgabe"]["value_int"], 2)
+        self.assertEqual(result["hk_betriebsart_vorgabe"]["value_int"], 2)
+        self.assertEqual(result["hk3_betriebsart_vorgabe"]["value_int"], 2)
+        self.assertEqual(result["sg_systembetriebsart"]["value_int"], 2)
+        self.assertEqual(result["wtc_abgastemperatur"]["value_int"], 407)
+
+    async def test_read_parameters_keeps_missing_batch_response_isolated(
+        self,
+    ) -> None:
+        """A missing single response should not discard the remaining batch."""
+        client = ResponseClient(
+            capi_batch_response(
+                [
+                    CONFIRMED_HK1_RESPONSE,
+                    CONFIRMED_HK2_RESPONSE,
+                    None,
+                    CONFIRMED_SYSTEM_RESPONSE,
+                    CONFIRMED_ABGAS_RESPONSE,
+                ]
+            )
+        )
+
+        result = await client.read_parameters(CONFIRMED_PARAMS)
+
+        self.assertIn("sg_betriebsart_hk1_vorgabe", result)
+        self.assertIn("hk_betriebsart_vorgabe", result)
+        self.assertNotIn("hk3_betriebsart_vorgabe", result)
+        self.assertIn("sg_systembetriebsart", result)
+        self.assertEqual(result["wtc_abgastemperatur"]["value_int"], 407)
+
+    async def test_read_parameters_splits_batches_with_dense_numbering(self) -> None:
+        """Requests should split at 10 frames and number each batch densely."""
+        params = [
+            {
+                "key": f"key_{index}",
+                "mi": 0x01,
+                "mx": 0x00,
+                "ox": 0x2600 + index,
+                "os": 0x00,
+                "vs": 1,
+            }
+            for index in range(11)
+        ]
+        first_response = capi_batch_response(
+            [
+                vg_with_value(
+                    api.CMD_RESPONSE,
+                    param["mi"],
+                    param["mx"],
+                    param["ox"],
+                    param["os"],
+                    param["vs"],
+                    2,
+                )
+                for param in params[:10]
+            ]
+        )
+        second_response = capi_batch_response(
+            [
+                vg_with_value(
+                    api.CMD_RESPONSE,
+                    params[10]["mi"],
+                    params[10]["mx"],
+                    params[10]["ox"],
+                    params[10]["os"],
+                    params[10]["vs"],
+                    2,
+                )
+            ]
+        )
+        client = SequenceResponseClient([first_response, second_response])
+
+        result = await client.read_parameters(params)
+
+        self.assertEqual(len(result), 11)
+        self.assertEqual(client.payloads[0]["CAPI"]["NN"], 10)
+        self.assertEqual(client.payloads[1]["CAPI"]["NN"], 1)
+        self.assertEqual(
+            [key for key in client.payloads[0]["CAPI"] if key.startswith("N")],
+            ["NN", "N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08", "N09", "N10"],
+        )
+        self.assertEqual(
+            [key for key in client.payloads[1]["CAPI"] if key.startswith("N")],
+            ["NN", "N01"],
+        )
 
     async def test_probe_parameter_classifies_error_as_absent(self) -> None:
         """CMD_ERROR should be a confirmed negative presence probe."""
