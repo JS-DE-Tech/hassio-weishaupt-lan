@@ -56,7 +56,7 @@ class ParsingTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(iso_value, "2023-02-26T20:37:00")
+        self.assertEqual(iso_value, "2023-02-26T20:37:00+00:00")
 
 
 if __name__ == "__main__":

@@ -3,12 +3,15 @@
         "step": {
             "user": {
                 "title": "Weishaupt WTC Setup",
-                "description": "Connect to your Weishaupt Systemgerät (SG) via the CanApiJson interface.",
+                "description": "Connect to your Weishaupt system device (SG) via the CanApiJson interface.",
                 "data": {
                     "host": "Host / IP address",
                     "username": "Username",
                     "password": "Password",
-                    "scan_interval": "Scan interval (seconds)"
+                    "scan_interval": "Scan interval",
+                    "hk1_name": "Name heating circuit 1",
+                    "hk2_name": "Name heating circuit 2",
+                    "hk3_name": "Name heating circuit 3"
                 }
             }
         },
@@ -19,6 +22,20 @@
         },
         "abort": {
             "already_configured": "This device is already configured."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Weishaupt WTC Options",
+                "description": "Adjust polling and heating circuit display names.",
+                "data": {
+                    "scan_interval": "Scan interval",
+                    "hk1_name": "Name heating circuit 1",
+                    "hk2_name": "Name heating circuit 2",
+                    "hk3_name": "Name heating circuit 3"
+                }
+            }
         }
     }
 }

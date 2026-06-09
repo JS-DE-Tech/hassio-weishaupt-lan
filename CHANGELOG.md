@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 - 2026-06-09
+
+- Feature: Detect external EM-HK heating circuits dynamically and support HK1, HK2 and HK3 without creating entities for circuits that do not answer the CanApiJson probe.
+- Feature: Add writable Betriebsart Vorgabe selects for every detected heating circuit.
+- Feature: Add configurable heating circuit display names and an options flow with automatic reload.
+- Feature: Replace the scan interval number field with a Home Assistant slider from 30 to 300 seconds in 10 second steps.
+- Fix: Accept write operations only after a matching CanApiJson `CMD_ACK`; `CMD_ERROR`, missing responses and `CMD_RESPONSE` are rejected.
+- Migration: HK2 keeps the historical `hk_*` sensor keys and `<entry_id>_hk` device identifier. HK3 uses new `hk3_*` keys and `<entry_id>_hk3`.
+
 ## 0.2.5 - 2026-04-19
 
 - Fix: Make device timestamp timezone-aware (UTC) to fix auto-update of sensor values (#5, thanks @wagnerpizza).

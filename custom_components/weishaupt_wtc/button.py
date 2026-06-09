@@ -15,8 +15,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .sensor import DEVICE_GROUP_MODELS, DEVICE_GROUP_NAMES, _device_identifier
-from .sensors import ALL_SENSORS, WeishauptDeviceGroup, WeishauptSensorDefinition
+from .sensor import DEVICE_GROUP_MODELS, _device_identifier, _device_name
+from .sensors import WeishauptDeviceGroup, WeishauptSensorDefinition
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ async def async_setup_entry(
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities: list[WeishauptButtonEntity] = []
-    for sensor_def in ALL_SENSORS:
+    for sensor_def in coordinator.sensor_definitions:
         if sensor_def.key in BUTTON_KEYS:
             entities.append(
                 WeishauptButtonEntity(
@@ -68,8 +68,10 @@ class WeishauptButtonEntity(CoordinatorEntity, ButtonEntity):
         """Return device info so the entity is attached to the correct device."""
         group = self._sensor_def.group
         info = DeviceInfo(
-            identifiers={_device_identifier(self._entry.entry_id, group)},
-            name=f"Weishaupt {DEVICE_GROUP_NAMES.get(group, group.value)}",
+            identifiers={
+                _device_identifier(self._entry.entry_id, group, self._sensor_def)
+            },
+            name=_device_name(self.coordinator, group, self._sensor_def),
             manufacturer="Weishaupt",
             model=DEVICE_GROUP_MODELS.get(group, "Unknown"),
         )

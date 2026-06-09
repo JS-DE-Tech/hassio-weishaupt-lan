@@ -16,8 +16,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .sensor import DEVICE_GROUP_MODELS, DEVICE_GROUP_NAMES, _device_identifier
-from .sensors import ALL_SENSORS, WeishauptDeviceGroup, WeishauptSensorDefinition
+from .sensor import DEVICE_GROUP_MODELS, _device_identifier, _device_name
+from .sensors import WeishauptDeviceGroup, WeishauptSensorDefinition
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,9 +32,15 @@ async def async_setup_entry(
 
     entities: list[WeishauptSelectEntity] = []
 
-    # Implement writable select for the specific register key
-    for sensor_def in ALL_SENSORS:
-        if sensor_def.key == "sg_betriebsart_hk1_vorgabe":
+    # Implement writable Betriebsart Vorgabe selects for all detected circuits.
+    for sensor_def in coordinator.sensor_definitions:
+        if (
+            sensor_def.mi == 0x02
+            and sensor_def.ox == 0x2533
+            and sensor_def.os == 0x02
+            and sensor_def.vs == 1
+            and sensor_def.value_map
+        ):
             entities.append(
                 WeishauptSelectEntity(
                     coordinator=coordinator, sensor_def=sensor_def, entry=entry
@@ -59,7 +65,10 @@ class WeishauptSelectEntity(CoordinatorEntity, SelectEntity):
         self._sensor_def = sensor_def
         self._entry = entry
 
-        self._attr_unique_id = f"{entry.entry_id}_{sensor_def.key}"
+        if sensor_def.key == "sg_betriebsart_hk1_vorgabe":
+            self._attr_unique_id = f"{entry.entry_id}_{sensor_def.key}"
+        else:
+            self._attr_unique_id = f"{entry.entry_id}_{sensor_def.key}_select"
         self._attr_name = sensor_def.name
         self._attr_icon = sensor_def.icon
 
@@ -68,8 +77,10 @@ class WeishauptSelectEntity(CoordinatorEntity, SelectEntity):
         """Return device info so the entity is attached to the correct device."""
         group = self._sensor_def.group
         info = DeviceInfo(
-            identifiers={_device_identifier(self._entry.entry_id, group)},
-            name=f"Weishaupt {DEVICE_GROUP_NAMES.get(group, group.value)}",
+            identifiers={
+                _device_identifier(self._entry.entry_id, group, self._sensor_def)
+            },
+            name=_device_name(self.coordinator, group, self._sensor_def),
             manufacturer="Weishaupt",
             model=DEVICE_GROUP_MODELS.get(group, "Unknown"),
         )

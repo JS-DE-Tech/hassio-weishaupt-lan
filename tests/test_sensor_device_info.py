@@ -58,6 +58,16 @@ sensor_component.SensorDeviceClass = SensorDeviceClass()
 sensor_component.SensorStateClass = SensorStateClass()
 sys.modules.setdefault("homeassistant.components.sensor", sensor_component)
 
+select_component = types.ModuleType("homeassistant.components.select")
+
+
+class SelectEntity:
+    """Minimal select entity stub."""
+
+
+select_component.SelectEntity = SelectEntity
+sys.modules.setdefault("homeassistant.components.select", select_component)
+
 config_entries = types.ModuleType("homeassistant.config_entries")
 
 
@@ -142,6 +152,10 @@ load_module("custom_components.weishaupt_wtc.parsing", PACKAGE_ROOT / "parsing.p
 sensors = load_module(
     "custom_components.weishaupt_wtc.sensors", PACKAGE_ROOT / "sensors.py"
 )
+heating_circuits = load_module(
+    "custom_components.weishaupt_wtc.heating_circuits",
+    PACKAGE_ROOT / "heating_circuits.py",
+)
 
 coordinator_module = types.ModuleType("custom_components.weishaupt_wtc.coordinator")
 
@@ -155,6 +169,9 @@ sys.modules["custom_components.weishaupt_wtc.coordinator"] = coordinator_module
 
 sensor = load_module(
     "custom_components.weishaupt_wtc.sensor", PACKAGE_ROOT / "sensor.py"
+)
+select = load_module(
+    "custom_components.weishaupt_wtc.select", PACKAGE_ROOT / "select.py"
 )
 
 
@@ -191,6 +208,111 @@ class SensorDeviceInfoTests(unittest.TestCase):
             entity.device_info["via_device"],
             ("weishaupt_wtc", "entry-123_sg"),
         )
+
+    def test_hk2_keeps_legacy_keys_and_device_identifier(self) -> None:
+        """HK2 should keep the historical generic hk_* unique IDs."""
+        hk2_defs = heating_circuits.build_hk_sensor_definitions(2, 0x01)
+        betriebsart = hk2_defs[0]
+        entity = sensor.WeishauptSensorEntity(
+            coordinator=SimpleNamespace(
+                data={}, heating_circuit_names={2: "Heizkoerper Keller"}
+            ),
+            sensor_def=betriebsart,
+            entry=SimpleNamespace(entry_id="entry-123"),
+        )
+
+        self.assertEqual(betriebsart.key, "hk_betriebsart_vorgabe")
+        self.assertEqual(betriebsart.mx, 0x01)
+        self.assertEqual(betriebsart.modbus_reg, "1030")
+        self.assertEqual(entity._attr_unique_id, "entry-123_hk_betriebsart_vorgabe")
+        self.assertEqual(
+            entity.device_info["identifiers"],
+            {("weishaupt_wtc", "entry-123_hk")},
+        )
+        self.assertEqual(entity.device_info["name"], "Heizkoerper Keller")
+
+    def test_hk3_gets_numbered_keys_and_device_identifier(self) -> None:
+        """HK3 should use MX=0x02 and its own device identifier."""
+        hk3_defs = heating_circuits.build_hk_sensor_definitions(3, 0x02)
+        betriebsart = hk3_defs[0]
+        vorlauf = next(
+            sensor_def
+            for sensor_def in hk3_defs
+            if sensor_def.key == "hk3_vorlaufisttemperatur"
+        )
+        entity = sensor.WeishauptSensorEntity(
+            coordinator=SimpleNamespace(
+                data={}, heating_circuit_names={3: "Fussbodenheizung OG"}
+            ),
+            sensor_def=betriebsart,
+            entry=SimpleNamespace(entry_id="entry-123"),
+        )
+
+        self.assertEqual(betriebsart.key, "hk3_betriebsart_vorgabe")
+        self.assertEqual(betriebsart.mx, 0x02)
+        self.assertEqual(betriebsart.modbus_reg, "1060")
+        self.assertEqual(vorlauf.modbus_reg, "1076")
+        self.assertEqual(
+            entity.device_info["identifiers"],
+            {("weishaupt_wtc", "entry-123_hk3")},
+        )
+        self.assertEqual(entity.device_info["name"], "Fussbodenheizung OG")
+
+    def test_sensor_definitions_exclude_undetected_external_circuits(self) -> None:
+        """Only detected external circuits should contribute sensor definitions."""
+        hk2_only = heating_circuits.build_sensor_definitions([1, 2])
+        hk2_hk3 = heating_circuits.build_sensor_definitions([1, 2, 3])
+        no_external = heating_circuits.build_sensor_definitions([1])
+
+        self.assertTrue(any(defn.key == "hk_status" for defn in hk2_only))
+        self.assertFalse(any(defn.key == "hk3_status" for defn in hk2_only))
+        self.assertTrue(any(defn.key == "hk3_status" for defn in hk2_hk3))
+        self.assertFalse(
+            any(defn.group == sensors.WeishauptDeviceGroup.HK for defn in no_external)
+        )
+
+    def test_heating_circuit_names_do_not_change_unique_ids(self) -> None:
+        """Display names must not be part of unique IDs."""
+        hk2_def = heating_circuits.build_hk_sensor_definitions(2, 0x01)[0]
+        entity_a = sensor.WeishauptSensorEntity(
+            coordinator=SimpleNamespace(data={}, heating_circuit_names={2: "A"}),
+            sensor_def=hk2_def,
+            entry=SimpleNamespace(entry_id="entry-123"),
+        )
+        entity_b = sensor.WeishauptSensorEntity(
+            coordinator=SimpleNamespace(data={}, heating_circuit_names={2: "B"}),
+            sensor_def=hk2_def,
+            entry=SimpleNamespace(entry_id="entry-123"),
+        )
+
+        self.assertEqual(entity_a._attr_unique_id, entity_b._attr_unique_id)
+
+    def test_hk_select_unique_ids_do_not_collide_with_sensors(self) -> None:
+        """HK2/HK3 selects should not reuse read-only sensor unique IDs."""
+        for sensor_def in (
+            heating_circuits.build_hk_sensor_definitions(2, 0x01)[0],
+            heating_circuits.build_hk_sensor_definitions(3, 0x02)[0],
+        ):
+            sensor_entity = sensor.WeishauptSensorEntity(
+                coordinator=SimpleNamespace(
+                    data={}, heating_circuit_names={2: "HK2", 3: "HK3"}
+                ),
+                sensor_def=sensor_def,
+                entry=SimpleNamespace(entry_id="entry-123"),
+            )
+            select_entity = select.WeishauptSelectEntity(
+                coordinator=SimpleNamespace(
+                    data={}, heating_circuit_names={2: "HK2", 3: "HK3"}
+                ),
+                sensor_def=sensor_def,
+                entry=SimpleNamespace(entry_id="entry-123"),
+            )
+
+            self.assertNotEqual(
+                sensor_entity._attr_unique_id,
+                select_entity._attr_unique_id,
+            )
+            self.assertTrue(select_entity._attr_unique_id.endswith("_select"))
 
 
 if __name__ == "__main__":

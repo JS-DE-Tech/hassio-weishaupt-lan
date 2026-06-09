@@ -81,6 +81,30 @@ class EmptyResponseClient(api.WeishauptApiClient):
         return None
 
 
+class ResponseClient(api.WeishauptApiClient):
+    """API client test double returning a configured response."""
+
+    def __init__(self, response: dict | None) -> None:
+        super().__init__("wem-sg", "admin", "Admin123")
+        self.response = response
+        self.payloads: list[dict] = []
+
+    async def _post(self, payload: dict) -> dict | None:
+        """Capture the payload and return the configured response."""
+        self.payloads.append(payload)
+        return self.response
+
+
+def capi_response(vg: str) -> dict:
+    """Build a minimal CanApiJson response."""
+    return {"CAPI": {"N01": {"VG": vg}}}
+
+
+def vg(cmd: int, mi: int, mx: int, ox: int, os_val: int, vs: int) -> str:
+    """Build a minimal response VG without value bytes."""
+    return f"{cmd:02x}{mi:02x}{mx:02x}{ox:04x}{os_val:02x}{vs:04x}"
+
+
 class ApiClientTests(unittest.IsolatedAsyncioTestCase):
     """Test API client behavior for empty device responses."""
 
@@ -112,6 +136,74 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {})
         self.assertTrue(
             any("Empty response from device" in entry for entry in logs.output)
+        )
+
+    async def test_has_heating_circuit_sends_hk2_mx(self) -> None:
+        """HK2 discovery should probe MI=0x02/MX=0x01."""
+        client = ResponseClient(
+            capi_response(vg(api.CMD_RESPONSE, 0x02, 0x01, 0x2533, 0x02, 1))
+        )
+
+        self.assertTrue(await client.has_heating_circuit(0x01))
+
+        sent_vg = client.payloads[0]["CAPI"]["N01"]["VG"]
+        self.assertEqual(sent_vg[2:6], "0201")
+
+    async def test_has_heating_circuit_sends_hk3_mx(self) -> None:
+        """HK3 discovery should probe MI=0x02/MX=0x02."""
+        client = ResponseClient(
+            capi_response(vg(api.CMD_RESPONSE, 0x02, 0x02, 0x2533, 0x02, 1))
+        )
+
+        self.assertTrue(await client.has_heating_circuit(0x02))
+
+        sent_vg = client.payloads[0]["CAPI"]["N01"]["VG"]
+        self.assertEqual(sent_vg[2:6], "0202")
+
+    async def test_write_parameter_accepts_matching_ack(self) -> None:
+        """A matching CMD_ACK should be accepted as a successful write."""
+        client = ResponseClient(
+            capi_response(vg(api.CMD_ACK, 0x02, 0x01, 0x2533, 0x02, 1))
+        )
+
+        self.assertTrue(
+            await client.write_parameter(0x02, 0x01, 0x2533, 0x02, 1, 6)
+        )
+
+    async def test_write_parameter_rejects_error(self) -> None:
+        """CMD_ERROR should reject a write."""
+        client = ResponseClient(
+            capi_response(vg(api.CMD_ERROR, 0x02, 0x01, 0x2533, 0x02, 1))
+        )
+
+        self.assertFalse(
+            await client.write_parameter(0x02, 0x01, 0x2533, 0x02, 1, 6)
+        )
+
+    async def test_write_parameter_rejects_response_instead_of_ack(self) -> None:
+        """CMD_RESPONSE must not be accepted as a write confirmation."""
+        client = ResponseClient(
+            capi_response(vg(api.CMD_RESPONSE, 0x02, 0x01, 0x2533, 0x02, 1))
+        )
+
+        self.assertFalse(
+            await client.write_parameter(0x02, 0x01, 0x2533, 0x02, 1, 6)
+        )
+
+    async def test_write_parameter_rejects_missing_response(self) -> None:
+        """Missing CAPI/VG data should reject a write."""
+        client = ResponseClient({"CAPI": {}})
+
+        self.assertFalse(
+            await client.write_parameter(0x02, 0x01, 0x2533, 0x02, 1, 6)
+        )
+
+    async def test_write_parameter_rejects_incomplete_response(self) -> None:
+        """Incomplete VG data should reject a write."""
+        client = ResponseClient(capi_response("040201"))
+
+        self.assertFalse(
+            await client.write_parameter(0x02, 0x01, 0x2533, 0x02, 1, 6)
         )
 
 

@@ -8,7 +8,15 @@ from typing import Any
 
 import aiohttp
 
-from .const import API_ENDPOINT, CMD_GET, CMD_SET, CMD_RESPONSE, CMD_ERROR, SRC_DDC
+from .const import (
+    API_ENDPOINT,
+    CMD_ACK,
+    CMD_ERROR,
+    CMD_GET,
+    CMD_RESPONSE,
+    CMD_SET,
+    SRC_DDC,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -247,6 +255,28 @@ class WeishauptApiClient:
 
         return results
 
+    async def has_heating_circuit(self, mx: int) -> bool:
+        """Return True when an external heating circuit answers a probe read.
+
+        External EM-HK modules use MI=0x02 and MX=0x01 for HK2, MX=0x02 for
+        HK3. A circuit is considered present only when the device returns a
+        normal CMD_RESPONSE for the Betriebsart Vorgabe register.
+        """
+        key = f"_probe_hk_mx_{mx}"
+        results = await self.read_parameters(
+            [
+                {
+                    "key": key,
+                    "mi": 0x02,
+                    "mx": mx,
+                    "ox": 0x2533,
+                    "os": 0x02,
+                    "vs": 1,
+                }
+            ]
+        )
+        return key in results
+
     async def write_parameter(
         self,
         mi: int,
@@ -279,7 +309,7 @@ class WeishauptApiClient:
             raise
 
         if not response:
-            _LOGGER.debug("Empty response from device for write payload: %s", payload)
+            _LOGGER.debug("Empty response from device for write request")
             return False
 
         if "CAPI" not in response:
@@ -304,7 +334,37 @@ class WeishauptApiClient:
             return False
 
         if parsed["cmd"] == CMD_ERROR:
-            _LOGGER.debug("Error response for write VG: %s", vg_str)
+            _LOGGER.debug("Error response for write VG")
+            return False
+
+        if parsed["cmd"] != CMD_ACK:
+            _LOGGER.debug(
+                "Unexpected write response command 0x%02x for MI=0x%02x MX=0x%02x OX=0x%04x",
+                parsed["cmd"],
+                mi,
+                mx,
+                ox,
+            )
+            return False
+
+        expected = {
+            "mi": mi,
+            "mx": mx,
+            "ox": ox,
+            "os": os_val,
+            "vs": vs,
+        }
+        mismatches = [
+            field for field, value in expected.items() if parsed.get(field) != value
+        ]
+        if mismatches:
+            _LOGGER.debug(
+                "Write ACK address mismatch for MI=0x%02x MX=0x%02x OX=0x%04x fields=%s",
+                mi,
+                mx,
+                ox,
+                ",".join(mismatches),
+            )
             return False
 
         return True

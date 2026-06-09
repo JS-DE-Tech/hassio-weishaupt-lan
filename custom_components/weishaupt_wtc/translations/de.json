@@ -8,7 +8,10 @@
                     "host": "Host / IP-Adresse",
                     "username": "Benutzername",
                     "password": "Passwort",
-                    "scan_interval": "Abfrageintervall (Sekunden)"
+                    "scan_interval": "Abfrageintervall",
+                    "hk1_name": "Name Heizkreis 1",
+                    "hk2_name": "Name Heizkreis 2",
+                    "hk3_name": "Name Heizkreis 3"
                 }
             }
         },
@@ -19,6 +22,20 @@
         },
         "abort": {
             "already_configured": "Dieses Gerät ist bereits konfiguriert."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Weishaupt WTC Optionen",
+                "description": "Abfrageintervall und Anzeigenamen der Heizkreise anpassen.",
+                "data": {
+                    "scan_interval": "Abfrageintervall",
+                    "hk1_name": "Name Heizkreis 1",
+                    "hk2_name": "Name Heizkreis 2",
+                    "hk3_name": "Name Heizkreis 3"
+                }
+            }
         }
     }
 }

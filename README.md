@@ -51,11 +51,21 @@ http://admin:Admin123@wem-sg/ajax/CanApiJson.json
 1. Go to **Settings** → **Devices & Services** → **Add Integration**
 2. Search for "Weishaupt WTC"
 3. Enter the IP address (or hostname) of your Systemgerät
-4. Optionally adjust username, password, and scan interval
+4. Optionally adjust username, password, scan interval, and the display names for heating circuits 1-3
+
+The scan interval is configurable from **30 to 300 seconds** in 10 second steps.
+The same value and the heating circuit names can be changed later from the
+integration options. Saving options reloads the integration so the new polling
+interval and names take effect without removing the integration.
+
+Heating circuit names are display names only. Unique IDs, device identifiers and
+CanApiJson addresses do not depend on these names.
 
 ## Sensors
 
-The integration provides **77 sensors** across these device groups:
+The integration provides sensors across these device groups. External heating
+circuits are detected automatically and only circuits that return a valid
+CanApiJson `CMD_RESPONSE` are added.
 
 ### Systemgerät (SG) — Modbus 100-155
 - Betriebsart HK1 (Vorgabe / aktuell)
@@ -80,11 +90,38 @@ The integration provides **77 sensors** across these device groups:
 - Tageswärmemenge Vortag (Gesamt / Heizen / Warmwasser)
 
 ### Heizkreis (HK) — Modbus 1030-1046
+- HK2 is the first external EM-HK module (`MI=0x02`, `MX=0x01`)
+- HK3 is the second external EM-HK module (`MI=0x02`, `MX=0x02`)
 - Betriebsart Vorgabe / aktuell
 - So/Wi Umschaltung, Status
 - Raumsolltemperaturen (Komfort / Normal / Absenk / aktuell)
 - Vorlaufsolltemperaturen (Komfort / Normal / Absenk / Sonderniveau / aktuell)
 - Vorlaufisttemperatur
+
+HK1 remains part of the system device for compatibility. HK2 keeps the historic
+`hk_*` entity keys and the `<entry_id>_hk` device identifier, because older
+releases exposed one generic external heating circuit. HK3 uses separate
+`hk3_*` entity keys and the `<entry_id>_hk3` device identifier.
+
+## Writable controls
+
+For each detected heating circuit the integration exposes a writable
+**Betriebsart Vorgabe** select:
+
+- Standby
+- Zeitprogramm 1
+- Zeitprogramm 2
+- Zeitprogramm 3
+- Sommer
+- Komfort
+- Normal
+- Absenk
+
+Writes are treated as successful only when the device returns a matching
+CanApiJson `CMD_ACK`. Error responses, missing responses, and normal read
+responses are rejected. Write-capable entities should still be used carefully:
+always verify the effect on your own heating system after changing operating
+modes.
 
 ### Solar (SOL) — Modbus 20-27
 - Kollektortemperatur
