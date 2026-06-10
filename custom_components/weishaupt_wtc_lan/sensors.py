@@ -65,6 +65,27 @@ class WeishauptSensorDefinition:
     entity_registry_enabled_default: bool | None = None  # Override default enabled state; None = use category default
 
 
+@dataclass(frozen=True)
+class ExperimentalWtcRegister:
+    """Read-only WTC register candidate for experimental diagnostics."""
+
+    key: str
+    mi: int
+    mx: int
+    ox: int
+    os: int
+    vs: int
+    hint: str
+
+    @property
+    def name(self) -> str:
+        """Return the display name for this experimental register."""
+        return (
+            f"Experimental WTC {self.mi:02X}/{self.mx:02X}/"
+            f"{self.ox:04X}/{self.os:02X} VS={self.vs}"
+        )
+
+
 # ============================================================================
 # Value maps for enumeration-type registers
 # ============================================================================
@@ -1091,7 +1112,77 @@ WTC_SENSORS: list[WeishauptSensorDefinition] = [
         unit=UnitOfEnergy.KILO_WATT_HOUR,
         scale=0.01,
     ),
+    # Mirrored counter addresses were observed on real hardware. The regular
+    # entities intentionally use only 09/01/2920/00 and 09/01/2921/00 until the
+    # resettable-vs-lifetime distinction between mirrored pairs is confirmed.
+    WeishauptSensorDefinition(
+        key="wtc_brennerstarts_gesamt",
+        name="Burner Starts Total",
+        mi=0x09,
+        mx=0x01,
+        ox=0x2920,
+        os=0x00,
+        vs=2,
+        group=WeishauptDeviceGroup.WTC,
+        modbus_reg="confirmed 09/01/2920/00",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:counter",
+    ),
+    WeishauptSensorDefinition(
+        key="wtc_betriebsstunden_gesamt",
+        name="Burner Operating Hours Total",
+        mi=0x09,
+        mx=0x01,
+        ox=0x2921,
+        os=0x00,
+        vs=2,
+        group=WeishauptDeviceGroup.WTC,
+        modbus_reg="confirmed 09/01/2921/00",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        unit=UnitOfTime.HOURS,
+        icon="mdi:timer-outline",
+    ),
 ]
+
+
+EXPERIMENTAL_WTC_HINT = "Unconfirmed dynamic WTC value"
+
+
+def _experimental_wtc_register(
+    mi: int, mx: int, ox: int, os: int, vs: int
+) -> ExperimentalWtcRegister:
+    return ExperimentalWtcRegister(
+        key=f"wtc_experimental_{mi:02x}_{mx:02x}_{ox:04x}_{os:02x}_{vs:02d}",
+        mi=mi,
+        mx=mx,
+        ox=ox,
+        os=os,
+        vs=vs,
+        hint=EXPERIMENTAL_WTC_HINT,
+    )
+
+
+EXPERIMENTAL_WTC_REGISTERS: tuple[ExperimentalWtcRegister, ...] = (
+    _experimental_wtc_register(0x09, 0x01, 0x2610, 0x02, 2),
+    _experimental_wtc_register(0x09, 0x01, 0x2611, 0x02, 2),
+    _experimental_wtc_register(0x09, 0x01, 0x2612, 0x02, 2),
+    _experimental_wtc_register(0x09, 0x01, 0x2615, 0x02, 2),
+    _experimental_wtc_register(0x09, 0x01, 0x2619, 0x02, 1),
+    _experimental_wtc_register(0x09, 0x01, 0x263A, 0x02, 2),
+    _experimental_wtc_register(0x09, 0x01, 0x2679, 0x00, 2),
+    _experimental_wtc_register(0x09, 0x01, 0x268A, 0x00, 4),
+    _experimental_wtc_register(0x09, 0x01, 0x268B, 0x00, 4),
+    _experimental_wtc_register(0x09, 0x01, 0x268C, 0x00, 4),
+    _experimental_wtc_register(0x09, 0x01, 0x268D, 0x00, 2),
+    _experimental_wtc_register(0x09, 0x01, 0x268E, 0x00, 2),
+    _experimental_wtc_register(0x09, 0x01, 0x268F, 0x00, 2),
+    _experimental_wtc_register(0x09, 0x01, 0x2902, 0x00, 2),
+    _experimental_wtc_register(0x09, 0x01, 0x2903, 0x00, 2),
+    _experimental_wtc_register(0x09, 0x01, 0x2904, 0x00, 1),
+    _experimental_wtc_register(0x09, 0x01, 0x2905, 0x00, 1),
+    _experimental_wtc_register(0x09, 0x01, 0x2908, 0x00, 2),
+    _experimental_wtc_register(0x09, 0x01, 0x2922, 0x00, 1),
+)
 
 
 # ============================================================================

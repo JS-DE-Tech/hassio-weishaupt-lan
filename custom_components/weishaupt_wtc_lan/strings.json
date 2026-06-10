@@ -11,7 +11,8 @@
                     "scan_interval": "Scan interval",
                     "hk1_name": "Name heating circuit 1",
                     "hk2_name": "Name heating circuit 2",
-                    "hk3_name": "Name heating circuit 3"
+                    "hk3_name": "Name heating circuit 3",
+                    "enable_experimental_wtc_sensors": "Enable experimental read-only WTC sensors"
                 }
             }
         },
@@ -33,7 +34,8 @@
                     "scan_interval": "Scan interval",
                     "hk1_name": "Name heating circuit 1",
                     "hk2_name": "Name heating circuit 2",
-                    "hk3_name": "Name heating circuit 3"
+                    "hk3_name": "Name heating circuit 3",
+                    "enable_experimental_wtc_sensors": "Enable experimental read-only WTC sensors"
                 }
             }
         }

@@ -13,13 +13,16 @@ from homeassistant.helpers import entity_registry as er
 
 from .api import ProbeStatus, WeishauptApiClient
 from .const import (
+    CONF_ENABLE_EXPERIMENTAL_WTC_SENSORS,
     CONF_HK1_NAME,
     CONF_HK2_NAME,
     CONF_HK3_NAME,
     CONF_SCAN_INTERVAL,
+    DEFAULT_ENABLE_EXPERIMENTAL_WTC_SENSORS,
     DEFAULT_HEATING_CIRCUIT_NAMES,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    EXPERIMENTAL_WTC_DEVICE_SUFFIX,
 )
 from .coordinator import WeishauptDataUpdateCoordinator
 from .heating_circuits import (
@@ -32,6 +35,7 @@ from .heating_circuits import (
     is_plausible_presence_value,
     probe_sensor_definitions_for_group,
 )
+from .sensors import EXPERIMENTAL_WTC_REGISTERS, ExperimentalWtcRegister
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -120,6 +124,31 @@ async def _async_detect_heating_circuit(
     return status
 
 
+async def _async_probe_experimental_wtc_registers(
+    client: WeishauptApiClient,
+) -> list[ExperimentalWtcRegister]:
+    """Return curated experimental WTC registers with setup-time responses."""
+    params = [
+        {
+            "key": register.key,
+            "mi": register.mi,
+            "mx": register.mx,
+            "ox": register.ox,
+            "os": register.os,
+            "vs": register.vs,
+        }
+        for register in EXPERIMENTAL_WTC_REGISTERS
+    ]
+    results = await client.read_parameters(params)
+    supported = [
+        register for register in EXPERIMENTAL_WTC_REGISTERS if register.key in results
+    ]
+    _LOGGER.debug(
+        "Detected %s supported experimental WTC registers", len(supported)
+    )
+    return supported
+
+
 async def _async_cleanup_inactive_devices(
     hass: HomeAssistant, entry: ConfigEntry, inactive_suffixes: set[str]
 ) -> None:
@@ -161,6 +190,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.options.get(
             CONF_SCAN_INTERVAL,
             entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+        )
+    )
+    enable_experimental_wtc_sensors = bool(
+        entry.options.get(
+            CONF_ENABLE_EXPERIMENTAL_WTC_SENSORS,
+            entry.data.get(
+                CONF_ENABLE_EXPERIMENTAL_WTC_SENSORS,
+                DEFAULT_ENABLE_EXPERIMENTAL_WTC_SENSORS,
+            ),
         )
     )
     heating_circuit_names = {
@@ -228,6 +266,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     elif sol_status == ProbeStatus.ABSENT:
         inactive_suffixes.add("sol")
 
+    experimental_wtc_registers: list[ExperimentalWtcRegister] = []
+    if enable_experimental_wtc_sensors and DEVICE_GROUP_WTC in active_device_groups:
+        experimental_wtc_registers = await _async_probe_experimental_wtc_registers(
+            client
+        )
+        if not experimental_wtc_registers:
+            inactive_suffixes.add(EXPERIMENTAL_WTC_DEVICE_SUFFIX)
+    else:
+        inactive_suffixes.add(EXPERIMENTAL_WTC_DEVICE_SUFFIX)
+
     sensor_definitions = build_sensor_definitions(
         active_heating_circuits,
         active_device_groups,
@@ -241,6 +289,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         active_heating_circuits=active_heating_circuits,
         heating_circuit_names=heating_circuit_names,
         active_device_groups=active_device_groups,
+        experimental_wtc_registers=experimental_wtc_registers,
     )
 
     await coordinator.async_config_entry_first_refresh()

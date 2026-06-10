@@ -164,7 +164,7 @@ Once these requirements are met, the integration can be added to Home Assistant.
 1. Copy the folder:
 
    ```text
-   custom_components/weishaupt_wtc
+   custom_components/weishaupt_wtc_lan
    ```
 
    to:
@@ -188,6 +188,23 @@ The polling interval can be configured from **10 to 600 seconds** in steps of **
 The same options can be changed later from the integration options. Saving the options reloads the integration so the new polling interval and display names take effect without removing the integration.
 
 Heating-circuit names are display names only. Entity unique IDs, device identifiers, and CanApiJson register addresses remain stable when names are changed.
+
+## Optional Experimental WTC Diagnostics
+
+The integration can optionally expose a separate read-only diagnostics device
+containing selected unconfirmed WTC registers.
+
+Enable this feature from the integration options:
+
+```text
+Enable experimental read-only WTC sensors
+```
+
+The experimental sensors are intended for real-hardware correlation testing.
+They expose raw values and derived attributes but do not provide write support.
+
+The feature is disabled by default. When disabled, no experimental device,
+entities, setup probes, or polling requests are added.
 
 ## Device Detection and Naming
 
@@ -303,12 +320,20 @@ The WTC boiler device contains boiler-specific runtime values:
 - VPT volume flow
 - system pressure
 - VPT thermal output
+- burner starts total
+- burner operating hours total
 - previous-day heat quantity:
   - total
   - heating
   - domestic hot water
 
 The flue-gas-temperature and return-temperature registers were empirically confirmed on real hardware.
+
+The regular WTC boiler device also exposes the empirically confirmed
+`Burner Starts Total` and `Burner Operating Hours Total` counters. Mirrored
+counter addresses exist on tested hardware, but the integration uses only
+`09/01/2920/00` and `09/01/2921/00` for these regular entities until the
+resettable-vs-lifetime distinction is verified further.
 
 ### Solar
 
@@ -382,6 +407,8 @@ The following registers were confirmed through real read-only API responses on t
 | Previous-day heat quantity: heating | `0x09` | `0x01` | `0x2626` | `0x02` | `4` | × 0.01 kWh |
 | Previous-day heat quantity: hot water | `0x09` | `0x01` | `0x2627` | `0x02` | `4` | × 0.01 kWh |
 | Previous-day heat quantity: total | `0x09` | `0x01` | `0x2628` | `0x02` | `4` | × 0.01 kWh |
+| Burner Starts Total | `0x09` | `0x01` | `0x2920` | `0x00` | `2` | count |
+| Burner Operating Hours Total | `0x09` | `0x01` | `0x2921` | `0x00` | `2` | h |
 
 ## Protocol Reliability Notes
 

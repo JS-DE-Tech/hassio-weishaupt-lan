@@ -11,7 +11,8 @@
                     "scan_interval": "Abfrageintervall",
                     "hk1_name": "Name Heizkreis 1",
                     "hk2_name": "Name Heizkreis 2",
-                    "hk3_name": "Name Heizkreis 3"
+                    "hk3_name": "Name Heizkreis 3",
+                    "enable_experimental_wtc_sensors": "Experimentelle schreibgeschuetzte WTC-Sensoren aktivieren"
                 }
             }
         },
@@ -33,7 +34,8 @@
                     "scan_interval": "Abfrageintervall",
                     "hk1_name": "Name Heizkreis 1",
                     "hk2_name": "Name Heizkreis 2",
-                    "hk3_name": "Name Heizkreis 3"
+                    "hk3_name": "Name Heizkreis 3",
+                    "enable_experimental_wtc_sensors": "Experimentelle schreibgeschuetzte WTC-Sensoren aktivieren"
                 }
             }
         }

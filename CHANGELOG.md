@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Added total burner-start counter for the WTC boiler.
+- Added total burner operating-hours counter for the WTC boiler.
+- Added optional read-only `WTC Experimental Diagnostics` device.
+- Added selected raw WTC register candidates for real-hardware correlation testing.
+- Added diagnostic attributes with raw and scaled values.
+
+### Changed
+- Kept CanApiJson read batches limited to six frames for improved reliability.
+- Kept experimental polling disabled by default.
+
+### Fixed
+- Preserved valid raw zero values in regular and experimental read paths.
+- Ensured that a failing experimental register does not discard valid values from the same batch.
+
 ## 0.4.1 - 2026-06-10
 
 - Fix: Limit automatic CanApiJson read batches to six VG frames and keep dense `N01`, `N02`, ... numbering in every batch.

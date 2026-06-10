@@ -13,7 +13,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, EXPERIMENTAL_WTC_DEVICE_SUFFIX
 from .coordinator import WeishauptDataUpdateCoordinator
 from .heating_circuits import (
     NUMBER_SENSOR_KEYS,
@@ -29,7 +29,11 @@ from .parsing import (
     decode_module_attributes,
     extract_value_segment,
 )
-from .sensors import WeishauptDeviceGroup, WeishauptSensorDefinition
+from .sensors import (
+    ExperimentalWtcRegister,
+    WeishauptDeviceGroup,
+    WeishauptSensorDefinition,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,6 +63,12 @@ DEVICE_SUFFIX_MODELS = {
     "hk": "EM-HK Heizkreis",
     "hk3": "EM-HK Heizkreis",
     "ww": "Warmwasser",
+    EXPERIMENTAL_WTC_DEVICE_SUFFIX: "WTC experimental diagnostics",
+}
+
+SENTINEL_VALUES = {
+    2: {0x8000, 0xFFFF},
+    4: {0x80000000, 0xFFFFFFFF},
 }
 
 
@@ -132,8 +142,19 @@ async def async_setup_entry(
         manufacturer="Weishaupt",
         model=DEVICE_GROUP_MODELS[WeishauptDeviceGroup.SG],
     )
+    if coordinator.experimental_wtc_registers:
+        device_registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={
+                (DOMAIN, f"{entry.entry_id}_{EXPERIMENTAL_WTC_DEVICE_SUFFIX}")
+            },
+            name="WTC Experimental Diagnostics",
+            manufacturer="Weishaupt",
+            model=DEVICE_SUFFIX_MODELS[EXPERIMENTAL_WTC_DEVICE_SUFFIX],
+            via_device=_system_device_identifier(entry.entry_id),
+        )
 
-    entities: list[WeishauptSensorEntity] = []
+    entities: list[WeishauptSensorEntity | WeishauptExperimentalWtcSensorEntity] = []
     for sensor_def in coordinator.sensor_definitions:
         # Skip creating read-only sensors when writable entities exist.
         if sensor_def.key in (
@@ -149,7 +170,30 @@ async def async_setup_entry(
             )
         )
 
+    for register in coordinator.experimental_wtc_registers:
+        entities.append(
+            WeishauptExperimentalWtcSensorEntity(
+                coordinator=coordinator,
+                register=register,
+                entry=entry,
+            )
+        )
+
     async_add_entities(entities)
+
+
+def _sentinel_values(value_size: int) -> set[int]:
+    """Return raw sentinel values for a declared value size."""
+    return SENTINEL_VALUES.get(value_size, set())
+
+
+def _signed_value(raw_value: int, value_size: int) -> int:
+    """Return raw_value interpreted as a signed big-endian integer."""
+    sign_bit = 1 << (value_size * 8 - 1)
+    full_range = 1 << (value_size * 8)
+    if raw_value & sign_bit:
+        return raw_value - full_range
+    return raw_value
 
 
 class WeishauptSensorEntity(
@@ -357,3 +401,109 @@ class WeishauptSensorEntity(
                         attrs.update(decode_module_attributes(module[1]))
 
         return attrs
+
+
+class WeishauptExperimentalWtcSensorEntity(
+    CoordinatorEntity[WeishauptDataUpdateCoordinator], SensorEntity
+):
+    """Read-only experimental WTC diagnostic sensor."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: WeishauptDataUpdateCoordinator,
+        register: ExperimentalWtcRegister,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize the experimental sensor."""
+        super().__init__(coordinator)
+        self._register = register
+        self._entry = entry
+
+        self._attr_unique_id = f"{entry.entry_id}_{register.key}"
+        self._attr_name = register.name
+
+        from homeassistant.helpers.entity import EntityCategory
+
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info for this experimental sensor."""
+        return DeviceInfo(
+            identifiers={
+                (DOMAIN, f"{self._entry.entry_id}_{EXPERIMENTAL_WTC_DEVICE_SUFFIX}")
+            },
+            name="WTC Experimental Diagnostics",
+            manufacturer="Weishaupt",
+            model=DEVICE_SUFFIX_MODELS[EXPERIMENTAL_WTC_DEVICE_SUFFIX],
+            via_device=_system_device_identifier(self._entry.entry_id),
+        )
+
+    def _data(self) -> dict[str, Any] | None:
+        """Return the latest coordinator data for this register."""
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get(self._register.key)
+
+    @property
+    def available(self) -> bool:
+        """Return True when a non-sentinel value is available."""
+        if not super().available:
+            return False
+        data = self._data()
+        if data is None:
+            return False
+        raw_value = data.get("value_int")
+        if raw_value is None:
+            return False
+        return raw_value not in _sentinel_values(self._register.vs)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the signed raw value."""
+        if not self.available:
+            return None
+        data = self._data()
+        if data is None:
+            return None
+        raw_value = data.get("value_int")
+        if raw_value is None:
+            return None
+        return _signed_value(raw_value, self._register.vs)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return experimental register metadata and derived raw values."""
+        data = self._data()
+        raw_unsigned = data.get("value_int") if data is not None else None
+        raw_hex = data.get("value_hex", "") if data is not None else ""
+        if raw_unsigned is None:
+            raw_signed = None
+            scaled_x0_1 = None
+            scaled_x0_01 = None
+        else:
+            raw_signed = _signed_value(raw_unsigned, self._register.vs)
+            scaled_x0_1 = round(raw_signed * 0.1, 2)
+            scaled_x0_01 = round(raw_signed * 0.01, 2)
+
+        return {
+            "raw_hex": raw_hex.upper(),
+            "raw_unsigned": raw_unsigned,
+            "raw_signed": raw_signed,
+            "scaled_x0_1": scaled_x0_1,
+            "scaled_x0_01": scaled_x0_01,
+            "mi": f"0x{self._register.mi:02X}",
+            "mx": f"0x{self._register.mx:02X}",
+            "ox": f"0x{self._register.ox:04X}",
+            "os": f"0x{self._register.os:02X}",
+            "vs": self._register.vs,
+            "candidate_hint": self._register.hint,
+            "confidence": "experimental",
+        }

@@ -261,6 +261,39 @@ OS = 0x00
 VS = 2
 ```
 
+## Optional Experimental WTC Diagnostics
+
+When the integration option `Enable experimental read-only WTC sensors` is
+enabled, setup probes the following curated WTC candidates. Candidates that
+return `CMD_RESPONSE` are exposed on the separate `WTC Experimental Diagnostics`
+device. Candidates that return `CMD_ERROR` are skipped.
+
+These values are intentionally raw diagnostics for correlation testing. They do
+not have confirmed meanings, units, device classes, state classes, or write
+support.
+
+| Address | VS | Notes |
+|---|---:|---|
+| `09/01/2610/02` | `2` | Curated experimental candidate |
+| `09/01/2611/02` | `2` | Curated experimental candidate |
+| `09/01/2612/02` | `2` | Curated experimental candidate |
+| `09/01/2615/02` | `2` | Curated experimental candidate |
+| `09/01/2619/02` | `1` | Curated experimental candidate |
+| `09/01/263A/02` | `2` | Curated experimental candidate |
+| `09/01/2679/00` | `2` | Curated experimental candidate |
+| `09/01/268A/00` | `4` | Curated experimental candidate |
+| `09/01/268B/00` | `4` | Curated experimental candidate |
+| `09/01/268C/00` | `4` | Curated experimental candidate |
+| `09/01/268D/00` | `2` | Curated experimental candidate |
+| `09/01/268E/00` | `2` | Curated experimental candidate |
+| `09/01/268F/00` | `2` | Curated experimental candidate |
+| `09/01/2902/00` | `2` | Curated experimental candidate |
+| `09/01/2903/00` | `2` | Curated experimental candidate |
+| `09/01/2904/00` | `1` | Curated experimental candidate |
+| `09/01/2905/00` | `1` | Curated experimental candidate |
+| `09/01/2908/00` | `2` | Curated experimental candidate |
+| `09/01/2922/00` | `1` | Curated experimental candidate |
+
 ## Network Diagnostic Registers
 
 These values were confirmed through the local web-interface JavaScript and read-only requests.
@@ -273,9 +306,10 @@ These values were confirmed through the local web-interface JavaScript and read-
 | Gateway | `0x06` | `0x00` | `0x250A` | `0x00` | `4` | IPv4 |
 | DNS server | `0x06` | `0x00` | `0x250B` | `0x00` | `4` | IPv4 |
 
-## Experimental Candidates
+## Broad Experimental Candidates
 
-The following values are intentionally not exposed as Home Assistant entities yet.
+The following broad discovery topics are intentionally not exposed as regular
+Home Assistant entities.
 
 Their meaning, scaling, stability, or mirrored-register behavior still requires targeted correlation testing.
 

@@ -12,7 +12,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import WeishauptApiClient, WeishauptApiError, WeishauptConnectionError
 from .const import DOMAIN
 from .heating_circuits import build_polled_sensor_definitions
-from .sensors import WeishauptSensorDefinition
+from .sensors import ExperimentalWtcRegister, WeishauptSensorDefinition
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         active_heating_circuits: list[int] | None = None,
         heating_circuit_names: dict[int, str] | None = None,
         active_device_groups: set[str] | None = None,
+        experimental_wtc_registers: list[ExperimentalWtcRegister] | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -64,6 +65,7 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.active_heating_circuits = active_heating_circuits or [1]
         self.heating_circuit_names = heating_circuit_names or {}
         self.active_device_groups = active_device_groups or set()
+        self.experimental_wtc_registers = experimental_wtc_registers or []
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the Weishaupt device."""
@@ -77,6 +79,17 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "ox": sensor_def.ox,
                     "os": sensor_def.os,
                     "vs": sensor_def.vs,
+                }
+            )
+        for register in self.experimental_wtc_registers:
+            params.append(
+                {
+                    "key": register.key,
+                    "mi": register.mi,
+                    "mx": register.mx,
+                    "ox": register.ox,
+                    "os": register.os,
+                    "vs": register.vs,
                 }
             )
 
