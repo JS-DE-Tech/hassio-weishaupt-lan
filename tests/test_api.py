@@ -140,6 +140,11 @@ CONFIRMED_HK2_RESPONSE = "020201253302000102"
 CONFIRMED_HK3_RESPONSE = "020202253302000102"
 CONFIRMED_SYSTEM_RESPONSE = "020100261e00000102"
 CONFIRMED_ABGAS_RESPONSE = "02070025330200020197"
+CONFIRMED_ANLAGENDRUCK_RESPONSE = "02090126140200020095"
+CONFIRMED_KESSEL_RESPONSE = "02070025320000020192"
+CONFIRMED_VOLUMENSTROM_ZERO_RESPONSE = "02090126130200020000"
+CONFIRMED_RUECKLAUF_RESPONSE = "0207002537000002019d"
+CONFIRMED_VORLAUFSOLL_RESPONSE = "02070025450000020050"
 
 
 CONFIRMED_PARAMS = [
@@ -183,6 +188,46 @@ CONFIRMED_PARAMS = [
         "os": 0x02,
         "vs": 2,
     },
+    {
+        "key": "wtc_anlagendruck",
+        "mi": 0x09,
+        "mx": 0x01,
+        "ox": 0x2614,
+        "os": 0x02,
+        "vs": 2,
+    },
+    {
+        "key": "wtc_kesseltemperatur",
+        "mi": 0x07,
+        "mx": 0x00,
+        "ox": 0x2532,
+        "os": 0x00,
+        "vs": 2,
+    },
+    {
+        "key": "wtc_volumenstrom_vpt",
+        "mi": 0x09,
+        "mx": 0x01,
+        "ox": 0x2613,
+        "os": 0x02,
+        "vs": 2,
+    },
+    {
+        "key": "wtc_ruecklauftemperatur",
+        "mi": 0x07,
+        "mx": 0x00,
+        "ox": 0x2537,
+        "os": 0x00,
+        "vs": 2,
+    },
+    {
+        "key": "wtc_vorlaufsolltemperatur",
+        "mi": 0x07,
+        "mx": 0x00,
+        "ox": 0x2545,
+        "os": 0x00,
+        "vs": 2,
+    },
 ]
 
 
@@ -192,7 +237,14 @@ CONFIRMED_RESPONSES = [
     CONFIRMED_HK3_RESPONSE,
     CONFIRMED_SYSTEM_RESPONSE,
     CONFIRMED_ABGAS_RESPONSE,
+    CONFIRMED_ANLAGENDRUCK_RESPONSE,
+    CONFIRMED_KESSEL_RESPONSE,
+    CONFIRMED_VOLUMENSTROM_ZERO_RESPONSE,
+    CONFIRMED_RUECKLAUF_RESPONSE,
+    CONFIRMED_VORLAUFSOLL_RESPONSE,
 ]
+CONFIRMED_CORE_PARAMS = CONFIRMED_PARAMS[:5]
+CONFIRMED_CORE_RESPONSES = CONFIRMED_RESPONSES[:5]
 
 
 class ApiClientTests(unittest.IsolatedAsyncioTestCase):
@@ -252,9 +304,9 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_read_parameters_decodes_confirmed_real_frames(self) -> None:
         """Confirmed device responses should populate all expected data keys."""
-        client = ResponseClient(capi_batch_response(CONFIRMED_RESPONSES))
+        client = ResponseClient(capi_batch_response(CONFIRMED_CORE_RESPONSES))
 
-        result = await client.read_parameters(CONFIRMED_PARAMS)
+        result = await client.read_parameters(CONFIRMED_CORE_PARAMS)
 
         self.assertEqual(
             result["sg_betriebsart_hk1_vorgabe"]["value_int"],
@@ -294,7 +346,7 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await client.read_parameters(CONFIRMED_PARAMS)
+        result = await client.read_parameters(CONFIRMED_CORE_PARAMS)
 
         self.assertEqual(result["sg_betriebsart_hk1_vorgabe"]["value_int"], 2)
         self.assertEqual(result["hk_betriebsart_vorgabe"]["value_int"], 2)
@@ -318,7 +370,7 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await client.read_parameters(CONFIRMED_PARAMS)
+        result = await client.read_parameters(CONFIRMED_CORE_PARAMS)
 
         self.assertIn("sg_betriebsart_hk1_vorgabe", result)
         self.assertIn("hk_betriebsart_vorgabe", result)
@@ -326,8 +378,40 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("sg_systembetriebsart", result)
         self.assertEqual(result["wtc_abgastemperatur"]["value_int"], 407)
 
+    async def test_read_parameters_decodes_mixed_confirmed_batches(self) -> None:
+        """Mixed confirmed real responses should survive MAX_PARAMS splitting."""
+        client = SequenceResponseClient(
+            [
+                capi_batch_response(CONFIRMED_RESPONSES[:6]),
+                capi_batch_response(CONFIRMED_RESPONSES[6:]),
+            ]
+        )
+
+        result = await client.read_parameters(CONFIRMED_PARAMS)
+
+        self.assertEqual(result["sg_betriebsart_hk1_vorgabe"]["value_int"], 2)
+        self.assertEqual(result["hk_betriebsart_vorgabe"]["value_int"], 2)
+        self.assertEqual(result["hk3_betriebsart_vorgabe"]["value_int"], 2)
+        self.assertEqual(result["sg_systembetriebsart"]["value_int"], 2)
+        self.assertEqual(result["wtc_abgastemperatur"]["value_int"], 407)
+        self.assertEqual(result["wtc_anlagendruck"]["value_int"], 149)
+        self.assertEqual(result["wtc_kesseltemperatur"]["value_int"], 402)
+        self.assertEqual(result["wtc_volumenstrom_vpt"]["value_int"], 0)
+        self.assertEqual(result["wtc_ruecklauftemperatur"]["value_int"], 413)
+        self.assertEqual(result["wtc_vorlaufsolltemperatur"]["value_int"], 80)
+        self.assertEqual(client.payloads[0]["CAPI"]["NN"], 6)
+        self.assertEqual(client.payloads[1]["CAPI"]["NN"], 4)
+        self.assertEqual(
+            [key for key in client.payloads[0]["CAPI"] if key.startswith("N")],
+            ["NN", "N01", "N02", "N03", "N04", "N05", "N06"],
+        )
+        self.assertEqual(
+            [key for key in client.payloads[1]["CAPI"] if key.startswith("N")],
+            ["NN", "N01", "N02", "N03", "N04"],
+        )
+
     async def test_read_parameters_splits_batches_with_dense_numbering(self) -> None:
-        """Requests should split at 10 frames and number each batch densely."""
+        """Requests should split at 6 frames and number each batch densely."""
         params = [
             {
                 "key": f"key_{index}",
@@ -337,7 +421,7 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
                 "os": 0x00,
                 "vs": 1,
             }
-            for index in range(11)
+            for index in range(7)
         ]
         first_response = capi_batch_response(
             [
@@ -350,18 +434,18 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
                     param["vs"],
                     2,
                 )
-                for param in params[:10]
+                for param in params[:6]
             ]
         )
         second_response = capi_batch_response(
             [
                 vg_with_value(
                     api.CMD_RESPONSE,
-                    params[10]["mi"],
-                    params[10]["mx"],
-                    params[10]["ox"],
-                    params[10]["os"],
-                    params[10]["vs"],
+                    params[6]["mi"],
+                    params[6]["mx"],
+                    params[6]["ox"],
+                    params[6]["os"],
+                    params[6]["vs"],
                     2,
                 )
             ]
@@ -370,12 +454,12 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
 
         result = await client.read_parameters(params)
 
-        self.assertEqual(len(result), 11)
-        self.assertEqual(client.payloads[0]["CAPI"]["NN"], 10)
+        self.assertEqual(len(result), 7)
+        self.assertEqual(client.payloads[0]["CAPI"]["NN"], 6)
         self.assertEqual(client.payloads[1]["CAPI"]["NN"], 1)
         self.assertEqual(
             [key for key in client.payloads[0]["CAPI"] if key.startswith("N")],
-            ["NN", "N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08", "N09", "N10"],
+            ["NN", "N01", "N02", "N03", "N04", "N05", "N06"],
         )
         self.assertEqual(
             [key for key in client.payloads[1]["CAPI"] if key.startswith("N")],

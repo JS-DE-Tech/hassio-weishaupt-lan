@@ -28,6 +28,7 @@ from .heating_circuits import (
     DEVICE_GROUP_WTC,
     DEVICE_GROUP_WW,
     build_sensor_definitions,
+    device_groups_from_systable_csv,
     is_plausible_presence_value,
     probe_sensor_definitions_for_group,
 )
@@ -73,6 +74,30 @@ async def _async_detect_device_group(
         return ProbeStatus.PRESENT if default_on_unknown else ProbeStatus.UNKNOWN
     _LOGGER.debug("No plausible presence value found for Weishaupt %s", group)
     return ProbeStatus.ABSENT
+
+
+async def _async_detect_systable_device_groups(
+    client: WeishauptApiClient,
+) -> set[str] | None:
+    """Use systable.csv as the primary read-only module inventory when present."""
+    csv_text = await client.fetch_systable_csv()
+    if csv_text is None:
+        return None
+
+    groups = device_groups_from_systable_csv(csv_text)
+    _LOGGER.debug("Detected Weishaupt groups from systable.csv: %s", sorted(groups))
+    return groups
+
+
+def _systable_status_for_group(systable_groups: set[str] | None, group: str) -> str:
+    """Return a primary systable presence decision for a logical group."""
+    if systable_groups is None:
+        return ProbeStatus.UNKNOWN
+    if group in systable_groups:
+        return ProbeStatus.PRESENT
+    if group == DEVICE_GROUP_SOL:
+        return ProbeStatus.ABSENT
+    return ProbeStatus.UNKNOWN
 
 
 async def _async_detect_heating_circuit(
@@ -171,25 +196,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             inactive_suffixes.add("hk" if circuit_number == 2 else "hk3")
 
     active_device_groups = {DEVICE_GROUP_SYSTEM}
-    wtc_status = await _async_detect_device_group(
-        client, DEVICE_GROUP_WTC, default_on_unknown=True
-    )
+    systable_groups = await _async_detect_systable_device_groups(client)
+
+    wtc_status = _systable_status_for_group(systable_groups, DEVICE_GROUP_WTC)
+    if wtc_status == ProbeStatus.UNKNOWN:
+        wtc_status = await _async_detect_device_group(
+            client, DEVICE_GROUP_WTC, default_on_unknown=True
+        )
     if wtc_status == ProbeStatus.PRESENT:
         active_device_groups.add(DEVICE_GROUP_WTC)
     elif wtc_status == ProbeStatus.ABSENT:
         inactive_suffixes.add("wtc")
 
-    ww_status = await _async_detect_device_group(
-        client, DEVICE_GROUP_WW, default_on_unknown=True
-    )
+    ww_status = _systable_status_for_group(systable_groups, DEVICE_GROUP_WW)
+    if ww_status == ProbeStatus.UNKNOWN:
+        ww_status = await _async_detect_device_group(
+            client, DEVICE_GROUP_WW, default_on_unknown=True
+        )
     if ww_status == ProbeStatus.PRESENT:
         active_device_groups.add(DEVICE_GROUP_WW)
     elif ww_status == ProbeStatus.ABSENT:
         inactive_suffixes.add("ww")
 
-    sol_status = await _async_detect_device_group(
-        client, DEVICE_GROUP_SOL, default_on_unknown=False
-    )
+    sol_status = _systable_status_for_group(systable_groups, DEVICE_GROUP_SOL)
+    if sol_status == ProbeStatus.UNKNOWN:
+        sol_status = await _async_detect_device_group(
+            client, DEVICE_GROUP_SOL, default_on_unknown=False
+        )
     if sol_status == ProbeStatus.PRESENT:
         active_device_groups.add(DEVICE_GROUP_SOL)
     elif sol_status == ProbeStatus.ABSENT:

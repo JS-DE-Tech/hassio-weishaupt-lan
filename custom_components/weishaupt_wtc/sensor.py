@@ -258,7 +258,7 @@ class WeishauptSensorEntity(
             vals: dict[str, int] = {}
             for k in required_keys:
                 d = self.coordinator.data.get(k)
-                if not d:
+                if d is None:
                     return None
                 vals[k] = d.get("value_int", 0)
 
@@ -324,7 +324,7 @@ class WeishauptSensorEntity(
         if self.coordinator.data:
             data_key = self._sensor_def.source_key or self._sensor_def.key
             data = self.coordinator.data.get(data_key)
-            if data:
+            if data is not None:
                 raw_value_hex = data.get("value_hex", "")
                 raw_value_int = data.get("value_int", 0)
 

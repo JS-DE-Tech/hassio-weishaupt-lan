@@ -21,7 +21,8 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 REQUEST_ID = "12345678"
-MAX_PARAMS_PER_REQUEST = 10  # Weishaupt supports up to 10 VG frames per request
+MAX_PARAMS_PER_REQUEST = 6
+SYSTABLE_PATH = "/sd/systable.csv"
 
 
 VG_ADDRESS_FIELDS = ("mi", "mx", "ox", "os", "vs")
@@ -199,6 +200,40 @@ class WeishauptApiClient:
                 f"Timeout connecting to Weishaupt device at {self._host}"
             ) from err
 
+    async def fetch_systable_csv(self) -> str | None:
+        """Fetch the read-only device system table if the web UI exposes it."""
+        session = await self._ensure_session()
+        url = f"http://{self._host}{SYSTABLE_PATH}"
+        headers = {
+            "Connection": "keep-alive",
+            "Referer": f"http://{self._host}/",
+        }
+
+        try:
+            async with session.get(
+                url,
+                headers=headers,
+                auth=aiohttp.BasicAuth(self._username, self._password),
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as response:
+                if response.status == 401:
+                    raise WeishauptAuthError(
+                        "Authentication failed. Check username/password."
+                    )
+                if response.status != 200:
+                    _LOGGER.debug(
+                        "systable.csv unavailable from device: HTTP %s",
+                        response.status,
+                    )
+                    return None
+                return await response.text(errors="replace")
+        except aiohttp.ClientConnectorError as err:
+            _LOGGER.debug("Cannot fetch systable.csv from %s: %s", self._host, err)
+            return None
+        except asyncio.TimeoutError:
+            _LOGGER.debug("Timeout fetching systable.csv from %s", self._host)
+            return None
+
     async def test_connection(self) -> bool:
         """Test if we can connect and authenticate to the device."""
         # Try reading a simple register (Betriebsart HK1 - reg 100)
@@ -234,6 +269,7 @@ class WeishauptApiClient:
             batch = params[batch_start : batch_start + MAX_PARAMS_PER_REQUEST]
             capi = {"NN": len(batch)}
             address_to_param = {_param_address(param): param for param in batch}
+            request_vgs: dict[str, str] = {}
             matched_keys: set[str] = set()
 
             for i, param in enumerate(batch):
@@ -245,6 +281,7 @@ class WeishauptApiClient:
                     vs=param["vs"],
                 )
                 capi[f"N{i + 1:02d}"] = {"VG": vg}
+                request_vgs[param["key"]] = vg
                 _LOGGER.debug(
                     "Read request %s key=%s %s VG=%s",
                     f"N{i + 1:02d}",
@@ -331,9 +368,10 @@ class WeishauptApiClient:
             for param in batch:
                 if param["key"] not in matched_keys:
                     _LOGGER.debug(
-                        "Missing read response for key=%s %s",
+                        "Missing read response for key=%s %s request VG=%s",
                         param["key"],
                         _format_address(param),
+                        request_vgs.get(param["key"], ""),
                     )
 
         return results

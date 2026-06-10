@@ -491,6 +491,61 @@ class SensorDeviceInfoTests(unittest.TestCase):
         self.assertTrue(abgas_sensor.available)
         self.assertEqual(abgas_sensor.native_value, 40.7)
 
+    def test_confirmed_wtc_frames_render_valid_zero_values(self) -> None:
+        """Confirmed WTC frames should not treat raw zero as unavailable."""
+        keys_and_expected = {
+            "wtc_anlagendruck": (149, "0095", 1.49),
+            "wtc_kesseltemperatur": (402, "0192", 40.2),
+            "wtc_volumenstrom_vpt": (0, "0000", 0),
+            "wtc_abgastemperatur": (399, "018f", 39.9),
+            "wtc_ruecklauftemperatur": (413, "019d", 41.3),
+            "wtc_vorlaufsolltemperatur": (80, "0050", 8.0),
+        }
+        coordinator = SimpleNamespace(
+            data={
+                key: {"value_int": raw, "value_hex": raw_hex}
+                for key, (raw, raw_hex, _expected) in keys_and_expected.items()
+            },
+        )
+        entry = SimpleNamespace(entry_id="entry-123")
+
+        for key, (_raw, _raw_hex, expected) in keys_and_expected.items():
+            entity = sensor.WeishauptSensorEntity(
+                coordinator=coordinator,
+                sensor_def=sensor_by_key(key),
+                entry=entry,
+            )
+            self.assertTrue(entity.available)
+            self.assertEqual(entity.native_value, expected)
+            self.assertEqual(entity.extra_state_attributes["raw_value_int"], _raw)
+
+    def test_heating_circuit_current_mode_and_status_are_retained(self) -> None:
+        """HK1, HK2 and HK3 should keep current-mode and status sensors."""
+        active_groups = {
+            heating_circuits.DEVICE_GROUP_SYSTEM,
+            heating_circuits.DEVICE_GROUP_WTC,
+            heating_circuits.DEVICE_GROUP_WW,
+        }
+        definitions = heating_circuits.build_sensor_definitions([1, 2, 3], active_groups)
+        keys = {sensor_def.key for sensor_def in definitions}
+
+        self.assertIn("sg_betriebsart_hk1_aktuell", keys)
+        self.assertIn("sg_status_hk1", keys)
+        self.assertIn("hk_betriebsart_aktuell", keys)
+        self.assertIn("hk_status", keys)
+        self.assertIn("hk3_betriebsart_aktuell", keys)
+        self.assertIn("hk3_status", keys)
+
+    def test_systable_csv_detects_optional_groups_without_solar(self) -> None:
+        """systable.csv should be usable as primary optional device inventory."""
+        csv_text = "id;name\n1;WTC Kessel\n2;EM-WW Warmwasser\n"
+
+        groups = heating_circuits.device_groups_from_systable_csv(csv_text)
+
+        self.assertIn(heating_circuits.DEVICE_GROUP_WTC, groups)
+        self.assertIn(heating_circuits.DEVICE_GROUP_WW, groups)
+        self.assertNotIn(heating_circuits.DEVICE_GROUP_SOL, groups)
+
 
 if __name__ == "__main__":
     unittest.main()

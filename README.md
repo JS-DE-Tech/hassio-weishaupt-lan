@@ -69,6 +69,9 @@ shown as separate devices. External heating circuits are detected automatically
 and only circuits that return a valid CanApiJson `CMD_RESPONSE` are added.
 Optional module devices such as Solar are only created when setup-time probing
 finds a plausible value rather than only missing responses or sentinel values.
+When available, the read-only `/sd/systable.csv` inventory is checked first for
+optional module detection. A missing Solar marker prevents Solar from being
+created and allows stale integration-owned Solar devices to be cleaned up.
 
 ### Systemgerät (SG) — Modbus 100-155
 - Betriebsart HK1 (Vorgabe / aktuell)
@@ -89,6 +92,11 @@ finds a plausible value rather than only missing responses or sentinel values.
 - Betriebsphase WTC und Brenner
 - Vorlaufsolltemperatur, Kesseltemperatur, Rücklauftemperatur, Abgastemperatur
 - Volumenstrom VPT, Anlagendruck
+
+`wtc_abgastemperatur` (Modbus 167) and `wtc_ruecklauftemperatur` (Modbus 168)
+are empirically confirmed on real hardware. Valid raw zero values are displayed
+as measurements; only documented sentinel values such as `0x8000` and `0xFFFF`
+are treated as unavailable.
 - Wärmeleistung VPT
 - Tageswärmemenge Vortag (Gesamt / Heizen / Warmwasser)
 
@@ -174,6 +182,16 @@ The script only performs HTTP GET requests for `/script/einstellung.js`,
 `/script/Form_eth_log.js` and `/sd/systable.csv`. It does not send write
 commands. Maintenance data is not exposed through the currently documented
 registers.
+
+For confirmed runtime values, `tools/probe_weishaupt_registers.py` can read the
+known HK, system and WTC registers. It only sends CanApiJson GET frames in
+batches of up to six frames, never sends SET commands and never prints
+credentials:
+
+```powershell
+$env:WEISHAUPT_PASSWORD = "Admin123"
+python tools/probe_weishaupt_registers.py --host 192.168.1.50
+```
 
 ## Protocol
 

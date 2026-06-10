@@ -116,14 +116,22 @@ class WeishauptSelectEntity(CoordinatorEntity, SelectEntity):
             return None
 
         data = self.coordinator.data.get(self._sensor_def.key)
-        if not data:
+        if data is None:
             return None
 
         raw = data.get("value_int")
         if raw is None:
             return None
 
-        return self._sensor_def.value_map.get(raw)
+        option = (self._sensor_def.value_map or {}).get(raw)
+        if option is None:
+            _LOGGER.debug(
+                "Unknown select value for %s: raw_value_int=%s raw_value_hex=%s",
+                self._sensor_def.key,
+                raw,
+                data.get("value_hex", ""),
+            )
+        return option
 
     async def async_select_option(self, option: Any) -> None:  # type: ignore[override]
         """Write the chosen option back to the device and refresh data."""

@@ -19,6 +19,25 @@ DEVICE_GROUP_WTC = "wtc"
 DEVICE_GROUP_WW = "ww"
 DEVICE_GROUP_SOL = "sol"
 
+SYSTABLE_DEVICE_GROUP_MARKERS = {
+    DEVICE_GROUP_WTC: (
+        "wtc",
+        "kessel",
+        "brennwert",
+        "boiler",
+    ),
+    DEVICE_GROUP_WW: (
+        "em-ww",
+        "warmwasser",
+        "domestic hot water",
+    ),
+    DEVICE_GROUP_SOL: (
+        "em-sol",
+        "solar",
+        "solarmodul",
+    ),
+}
+
 HK1_SENSOR_KEYS = {
     "sg_betriebsart_hk1_vorgabe",
     "sg_sowi_umschaltung_hk1",
@@ -138,6 +157,16 @@ def is_plausible_presence_value(sensor_def: WeishauptSensorDefinition, data: dic
     if raw_value in PRESENCE_SENTINELS.get(value_size, set()):
         return False
     return True
+
+
+def device_groups_from_systable_csv(csv_text: str) -> set[str]:
+    """Extract logical device groups from the read-only systable.csv metadata."""
+    text = csv_text.casefold()
+    groups: set[str] = set()
+    for group, markers in SYSTABLE_DEVICE_GROUP_MARKERS.items():
+        if any(marker in text for marker in markers):
+            groups.add(group)
+    return groups
 
 
 def _offset_modbus_register(register: str, offset: int) -> str:

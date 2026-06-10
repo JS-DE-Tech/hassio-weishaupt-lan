@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0.1 - 2026-06-10
+
+- Fix: Limit automatic CanApiJson read batches to six VG frames and keep dense `N01`, `N02`, ... numbering in every batch.
+- Fix: Treat raw value `0` as a valid measurement value, including WTC volume flow.
+- Fix: Ensure `HK3 Betriebsart Vorgabe` and `Systembetriebsart` selects read their current state directly from `coordinator.data`.
+- Fix: Keep HK1, HK2 and HK3 current operating-mode and status sensors while exposing only writable Vorgabe registers as controls.
+- Fix: Use `/sd/systable.csv` as the primary read-only module inventory for optional device groups and avoid creating Solar when the module is missing.
+- Feature: Add read-only `tools/probe_weishaupt_registers.py` for the empirically confirmed HK, system and WTC registers.
+- Note: WTC registers 167 (`wtc_abgastemperatur`) and 168 (`wtc_ruecklauftemperatur`) are empirically confirmed.
+- Note: No permanent warm-water on/off switch is created; `sg_warmwasser_push` remains a one-shot button only.
+
 ## 0.4.0 - 2026-06-09
 
 - Feature: Move HK1 entities to a separate logical Home Assistant device while preserving their existing keys, CanApiJson addresses and unique IDs.

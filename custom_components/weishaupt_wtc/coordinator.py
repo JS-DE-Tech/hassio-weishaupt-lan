@@ -17,9 +17,22 @@ from .sensors import WeishauptSensorDefinition
 _LOGGER = logging.getLogger(__name__)
 
 DEBUG_STATE_KEYS = {
+    "sg_betriebsart_hk1_vorgabe",
+    "sg_betriebsart_hk1_aktuell",
+    "sg_status_hk1",
+    "hk_betriebsart_vorgabe",
+    "hk_betriebsart_aktuell",
+    "hk_status",
     "hk3_betriebsart_vorgabe",
+    "hk3_betriebsart_aktuell",
+    "hk3_status",
     "sg_systembetriebsart",
+    "wtc_anlagendruck",
     "wtc_abgastemperatur",
+    "wtc_kesseltemperatur",
+    "wtc_ruecklauftemperatur",
+    "wtc_volumenstrom_vpt",
+    "wtc_vorlaufsolltemperatur",
 }
 
 

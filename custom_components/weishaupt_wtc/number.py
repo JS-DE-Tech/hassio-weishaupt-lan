@@ -125,7 +125,7 @@ class WeishauptNumberEntity(CoordinatorEntity, NumberEntity):
             return None
 
         data = self.coordinator.data.get(self._sensor_def.key)
-        if not data:
+        if data is None:
             return None
 
         raw_value = data.get("value_int")
