@@ -1,4 +1,17 @@
-# Weishaupt WTC — Home Assistant Integration (no Cloud)
+# Weishaupt WTC LAN for Home Assistant
+
+<p align="left">
+  <img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/system.png"
+       alt="Weishaupt WTC heating system"
+       width="620">
+</p>
+</p>
+
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Custom%20Integration-41BDF5?logo=home-assistant&logoColor=white)](https://www.home-assistant.io/)
+[![HACS](https://img.shields.io/badge/HACS-Custom%20Repository-41BDF5)](https://hacs.xyz/)
+[![Protocol](https://img.shields.io/badge/protocol-local%20CanApiJson-success)](#protocol)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](https://github.com/JS-DE-Tech/hacs-weishaupt-lan/blob/main/LICENSE)
+[![Support via PayPal](https://img.shields.io/badge/Support%20via-PayPal-0070BA?logo=paypal&logoColor=white)](https://paypal.me/JensSaffrich)
 
 Custom Home Assistant integration for Weishaupt heating systems using the local **CanApiJson** protocol (JSON over HTTP).
 
