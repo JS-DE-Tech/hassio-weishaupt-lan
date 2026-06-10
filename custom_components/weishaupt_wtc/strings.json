@@ -2,7 +2,7 @@
     "config": {
         "step": {
             "user": {
-                "title": "Weishaupt WTC Setup",
+                "title": "Weishaupt WTC LAN Setup",
                 "description": "Connect to your Weishaupt system device (SG) via the CanApiJson interface.",
                 "data": {
                     "host": "Host / IP address",
@@ -27,7 +27,7 @@
     "options": {
         "step": {
             "init": {
-                "title": "Weishaupt WTC Options",
+                "title": "Weishaupt WTC LAN Options",
                 "description": "Adjust polling (10-600 seconds) and heating circuit display names.",
                 "data": {
                     "scan_interval": "Scan interval",
