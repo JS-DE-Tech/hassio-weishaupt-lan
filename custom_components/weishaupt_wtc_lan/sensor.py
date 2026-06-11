@@ -17,10 +17,10 @@ from .const import DOMAIN, EXPERIMENTAL_WTC_DEVICE_SUFFIX, NETWORK_DEVICE_SUFFIX
 from .coordinator import WeishauptDataUpdateCoordinator
 from .heating_circuits import (
     NUMBER_SENSOR_KEYS,
-    SELECT_SENSOR_KEYS,
     WARM_WATER_SENSOR_KEYS,
     device_suffix_for_sensor,
     heating_circuit_for_sensor,
+    is_writable_operating_mode_definition,
 )
 from .parsing import (
     build_device_clock_time,
@@ -125,7 +125,7 @@ def _device_name(
             f"Heizkreis {heating_circuit}",
         )
     if device_suffix_for_sensor(sensor_def) == NETWORK_DEVICE_SUFFIX:
-        return "WEM Network Diagnostics"
+        return "Weishaupt Systemgerät Netzwerk"
     if sensor_def.key in WARM_WATER_SENSOR_KEYS:
         return "Weishaupt Warmwasser"
     return f"Weishaupt {DEVICE_GROUP_NAMES.get(group, group.value)}"
@@ -183,8 +183,9 @@ async def async_setup_entry(
     entities: list[WeishauptSensorEntity | WeishauptExperimentalWtcSensorEntity] = []
     for sensor_def in coordinator.sensor_definitions:
         # Skip creating read-only sensors when writable entities exist.
-        if sensor_def.key in (
-            SELECT_SENSOR_KEYS | NUMBER_SENSOR_KEYS | {"sg_warmwasser_push"}
+        if (
+            is_writable_operating_mode_definition(sensor_def)
+            or sensor_def.key in (NUMBER_SENSOR_KEYS | {"sg_warmwasser_push"})
         ):
             continue
 

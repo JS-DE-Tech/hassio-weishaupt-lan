@@ -215,6 +215,8 @@ PUMPE_MAP = {
 IP_MODE_MAP = {
     0: "Static",
     1: "DHCP",
+    # Raw value 3 is empirically confirmed as DHCP on the tested Systemgerät firmware.
+    3: "DHCP",
 }
 
 
@@ -581,6 +583,21 @@ SG_SENSORS: list[WeishauptSensorDefinition] = [
         value_map=SYSTEMBETRIEBSART_MAP,
     ),
     WeishauptSensorDefinition(
+        key="sg_systembetriebsart_aktuell",
+        name="Systembetriebsart aktuell",
+        mi=0x01,
+        mx=0x00,
+        ox=0x261E,
+        os=0x00,
+        vs=1,
+        group=WeishauptDeviceGroup.SG,
+        modbus_reg="124 mirror",
+        icon="mdi:cog-outline",
+        value_map=SYSTEMBETRIEBSART_MAP,
+        poll=False,
+        source_key="sg_systembetriebsart",
+    ),
+    WeishauptSensorDefinition(
         key="sg_aussentemperatur",
         name="Außentemperatur",
         mi=0x01,
@@ -888,10 +905,10 @@ SG_SENSORS: list[WeishauptSensorDefinition] = [
         mi=0x01,
         mx=0x00,
         ox=0x2563,
-        os=0x02,
+        os=0x04,
         vs=1,
         group=WeishauptDeviceGroup.SG,
-        modbus_reg="153",
+        modbus_reg="155",
         icon="mdi:calendar-today-outline",
         entity_category="diagnostic",
         entity_registry_enabled_default=False,
@@ -916,10 +933,10 @@ SG_SENSORS: list[WeishauptSensorDefinition] = [
         mi=0x01,
         mx=0x00,
         ox=0x2563,
-        os=0x04,
+        os=0x02,
         vs=1,
         group=WeishauptDeviceGroup.SG,
-        modbus_reg="155",
+        modbus_reg="153",
         icon="mdi:calendar-range-outline",
         entity_category="diagnostic",
         entity_registry_enabled_default=False,
@@ -953,7 +970,7 @@ SG_SENSORS: list[WeishauptSensorDefinition] = [
         icon="mdi:calendar",
         entity_category="diagnostic",
         poll=False,
-        entity_registry_enabled_default=False,
+        entity_registry_enabled_default=True,
     ),
     WeishauptSensorDefinition(
         key="sg_device_clock_time",
@@ -968,7 +985,7 @@ SG_SENSORS: list[WeishauptSensorDefinition] = [
         icon="mdi:clock-outline",
         entity_category="diagnostic",
         poll=False,
-        entity_registry_enabled_default=False,
+        entity_registry_enabled_default=True,
     ),
 ]
 
@@ -1234,7 +1251,7 @@ NETWORK_SENSORS: list[WeishauptSensorDefinition] = [
         icon="mdi:server-network",
         entity_category="diagnostic",
         poll=False,
-        entity_registry_enabled_default=False,
+        entity_registry_enabled_default=True,
     ),
     WeishauptSensorDefinition(
         key="network_ip_mode",
@@ -1249,7 +1266,8 @@ NETWORK_SENSORS: list[WeishauptSensorDefinition] = [
         icon="mdi:ip-network",
         value_map=IP_MODE_MAP,
         entity_category="diagnostic",
-        entity_registry_enabled_default=False,
+        poll=False,
+        entity_registry_enabled_default=True,
     ),
     WeishauptSensorDefinition(
         key="network_ip_address",
@@ -1263,7 +1281,8 @@ NETWORK_SENSORS: list[WeishauptSensorDefinition] = [
         modbus_reg="network 06/00/2508/00",
         icon="mdi:ip",
         entity_category="diagnostic",
-        entity_registry_enabled_default=False,
+        poll=False,
+        entity_registry_enabled_default=True,
     ),
     WeishauptSensorDefinition(
         key="network_subnet_mask",
@@ -1277,7 +1296,8 @@ NETWORK_SENSORS: list[WeishauptSensorDefinition] = [
         modbus_reg="network 06/00/2509/00",
         icon="mdi:lan",
         entity_category="diagnostic",
-        entity_registry_enabled_default=False,
+        poll=False,
+        entity_registry_enabled_default=True,
     ),
     WeishauptSensorDefinition(
         key="network_gateway",
@@ -1291,7 +1311,8 @@ NETWORK_SENSORS: list[WeishauptSensorDefinition] = [
         modbus_reg="network 06/00/250A/00",
         icon="mdi:router-network",
         entity_category="diagnostic",
-        entity_registry_enabled_default=False,
+        poll=False,
+        entity_registry_enabled_default=True,
     ),
     WeishauptSensorDefinition(
         key="network_dns_server",
@@ -1305,7 +1326,8 @@ NETWORK_SENSORS: list[WeishauptSensorDefinition] = [
         modbus_reg="network 06/00/250B/00",
         icon="mdi:dns",
         entity_category="diagnostic",
-        entity_registry_enabled_default=False,
+        poll=False,
+        entity_registry_enabled_default=True,
     ),
 ]
 

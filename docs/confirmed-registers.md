@@ -138,6 +138,15 @@ mapping, then the generic `Heizkreis 1` / `Heizkreis 2` / `Heizkreis 3`
 fallbacks. Display-name changes do not change entity unique IDs, device
 identifiers, or register addresses.
 
+The current parser supports explicit HK markers and header/address metadata
+where `MI=0x02` and `MX=0x00`, `0x01`, or `0x02`. The repository does not yet
+contain a real exported `systable.csv` fixture with heating-circuit display
+names, so one exported metadata file is still required for final parser
+adaptation if the tested firmware uses a different structure.
+
+The historic HK2 technical key prefix `hk_` is intentionally retained for
+backward compatibility with existing unique IDs, dashboards, and automations.
+
 | Key suffix | Description | OX | OS | VS | Scaling / Mapping | Status |
 |---|---|---:|---:|---:|---|---|
 | `betriebsart_vorgabe` | Operating-mode target | `0x2533` | `0x02` | `1` | enum | Confirmed |
@@ -353,6 +362,10 @@ Hostname is probed with the protocol string-read command at
 `06/00/2505/00`. It is exposed only when the device returns a supported string
 response.
 
+Network diagnostics are static setup-time values. They are read on setup or
+reload and are not included in recurring coordinator refresh batches. IP mode
+raw value `3` is empirically confirmed as `DHCP` on the tested firmware.
+
 ## Derived Device Date and Time
 
 The integration derives separate diagnostic date and clock-time sensors from
@@ -363,9 +376,24 @@ the existing raw Systemgeraet components:
 | `sg_device_date` | `sg_datum_tag`, `sg_datum_monat`, `sg_datum_jahr` | `DD.MM.YYYY` |
 | `sg_device_clock_time` | `sg_uhrzeit_stunden`, `sg_uhrzeit_minuten` | `HH:MM` |
 
-No extra protocol reads are added for these derived sensors. The raw component
-entities and the backward-compatible combined timestamp remain available as
-diagnostic entities and are disabled by default.
+Validated date field order on tested hardware:
+
+| Raw component key | Address | Meaning |
+|---|---|---|
+| `sg_datum_jahr` | `01/00/2563/02` | year offset, for example `26` -> `2026` |
+| `sg_datum_monat` | `01/00/2563/03` | month |
+| `sg_datum_tag` | `01/00/2563/04` | day |
+
+No extra protocol reads are added for these derived sensors. `sg_device_date`
+and `sg_device_clock_time` are enabled by default. The raw component entities
+and the backward-compatible combined timestamp remain available as diagnostic
+entities and are disabled by default.
+
+## System Operating-Mode Mirror
+
+`sg_systembetriebsart_aktuell` is a read-only mirror of the confirmed
+`sg_systembetriebsart` coordinator data. It exposes the same decoded mapping and
+does not add another protocol read.
 
 ## Snapshot Export Workflow
 
@@ -377,6 +405,17 @@ credentials, regular WTC values, network diagnostics when available, curated
 experimental values, and extended experimental values when enabled. They do not
 export passwords, authorization headers, HTTP Basic credentials, tokens, or
 cookies.
+
+## Local Metadata Export Workflow
+
+The service `weishaupt_wtc_lan.export_local_metadata` writes timestamped
+read-only local metadata under
+`/config/weishaupt_wtc_lan_diagnostics/local_metadata/`.
+
+The export includes `/sd/systable.csv` when it can be fetched and a JSON summary
+with parsed names, persisted detected names, whether detected-name usage is
+enabled, and resolved display names. It excludes passwords, authorization
+headers, tokens, cookies, and HTTP credentials.
 
 ## Broad Experimental Candidates
 

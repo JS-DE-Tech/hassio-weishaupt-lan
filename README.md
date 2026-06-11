@@ -261,6 +261,12 @@ small parsed mapping, for example `{ "1": "Plattenwaermetauscher" }`. The raw
 mapping when the file can be fetched; if the refresh fails, the last successful
 detected names remain available.
 
+The current parser supports explicit HK markers and confirmed metadata fields
+that expose `MI=0x02` with `MX=0x00`, `0x01`, or `0x02`. The repository does
+not currently contain a real exported `systable.csv` fixture with heating-circuit
+display names, so final parser adaptation may still require one exported
+metadata file from the validated installation.
+
 Observed example from a real installation:
 
 | Logical device | Display name from the installation |
@@ -282,6 +288,7 @@ Optional modules such as Solar are only created when inventory detection and set
 The Systemgerät device contains system-wide values:
 
 - system operating mode
+- current system operating-mode display
 - outdoor temperature
 - heating demand
 - domestic-hot-water demand
@@ -291,6 +298,16 @@ The Systemgerät device contains system-wide values:
 - CANopen error/warning diagnostic block
 - combined date/time value
 - separate diagnostic device date and clock-time values
+
+`Datum Anlage` and `Uhrzeit Anlage` are derived from the existing raw
+Systemgeraet date/time component registers and are enabled by default. The raw
+component entities remain disabled by default. Validated date byte order is:
+
+```text
+01/00/2563/02 -> year offset
+01/00/2563/03 -> month
+01/00/2563/04 -> day
+```
 
 ### HK1 — Integrated Heating Circuit
 
@@ -322,6 +339,10 @@ Technical addressing:
 HK2: MI = 0x02, MX = 0x01
 HK3: MI = 0x02, MX = 0x02
 ```
+
+HK2 intentionally retains the historic technical key prefix `hk_`, for example
+`hk_betriebsart_vorgabe`, to preserve existing unique IDs, dashboards, and
+automations. The display name still identifies the device as HK2.
 
 Entities include:
 
@@ -389,10 +410,11 @@ resettable-vs-lifetime distinction is verified further.
 The maintenance values are read-only diagnostics. They were empirically
 confirmed on tested hardware but are not used for reset or write operations.
 
-### WEM Network Diagnostics
+### Weishaupt Systemgeraet Netzwerk
 
 When at least one network value responds, the integration creates a separate
-read-only `WEM Network Diagnostics` device attached to the Systemgeraet device.
+read-only `Weishaupt Systemgeraet Netzwerk` device attached to the Systemgeraet
+device. The stable device identifier remains `<entry_id>_network`.
 
 Entities include:
 
@@ -403,7 +425,15 @@ Entities include:
 - gateway
 - DNS server
 
-Network entities are diagnostic and disabled by default in the entity registry.
+Numeric network values are read once during integration setup or reload and are
+kept as static coordinator data. They are not included in recurring refresh
+batches. Numeric network entities are diagnostic and enabled by default in the
+entity registry. IP mode raw value `3` is empirically confirmed as `DHCP` on the
+tested Systemgeraet firmware.
+
+Hostname uses an optional string-read probe. It is created only when the string
+read returns a non-empty value, and hostname read failure never fails setup.
+
 No credentials, passwords, or HTTP authorization data are exposed.
 
 ### Solar
@@ -444,6 +474,13 @@ The Systemgerät exposes a writable **System Operating Mode** select with the co
 - Summer
 - Automatic
 
+The Systemgeraet also exposes `Systembetriebsart aktuell`, a read-only mirror
+sensor derived from the same confirmed `sg_systembetriebsart` coordinator data.
+It does not add another protocol read.
+
+Redundant read-only HK2/HK3 operating-mode target sensors are removed on reload;
+the writable HK1/HK2/HK3 selects and distinct actual-state sensors remain.
+
 ### Write Validation
 
 Writes are accepted as successful only when the device returns a matching CanApiJson acknowledgement.
@@ -480,6 +517,26 @@ The following registers were confirmed through real read-only API responses on t
 | Previous-day heat quantity: total | `0x09` | `0x01` | `0x2628` | `0x02` | `4` | × 0.01 kWh |
 | Burner Starts Total | `0x09` | `0x01` | `0x2920` | `0x00` | `2` | count |
 | Burner Operating Hours Total | `0x09` | `0x01` | `0x2921` | `0x00` | `2` | h |
+
+## Local Metadata Export
+
+For troubleshooting heating-circuit name detection, call:
+
+```text
+weishaupt_wtc_lan.export_local_metadata
+```
+
+The service is read-only with respect to the heating system. It fetches
+`/sd/systable.csv` and writes timestamped files under:
+
+```text
+/config/weishaupt_wtc_lan_diagnostics/local_metadata/
+```
+
+The JSON summary contains parsed heating-circuit names, persisted detected
+names, whether detected-name usage is enabled, and the resolved display names.
+It does not export passwords, authorization headers, tokens, cookies, or HTTP
+credentials.
 
 ## Protocol Reliability Notes
 

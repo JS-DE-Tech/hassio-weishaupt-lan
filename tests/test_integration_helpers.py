@@ -177,7 +177,11 @@ class AdaptivePowerClient:
 class NetworkClient:
     """Fake client for network diagnostics probing."""
 
+    def __init__(self) -> None:
+        self.params: list[dict] = []
+
     async def read_parameters(self, params: list[dict]) -> dict:
+        self.params = params
         return {
             param["key"]: {"value_int": 0xC0A8012A, "value_hex": "c0a8012a"}
             for param in params
@@ -194,10 +198,33 @@ class EntityRegistry:
     def __init__(self, entries: list[SimpleNamespace]) -> None:
         self.entries = entries
         self.removed: list[str] = []
+        self.updated: list[tuple[str, dict]] = []
 
     def async_remove(self, entity_id: str) -> None:
         self.removed.append(entity_id)
         self.entries = [entry for entry in self.entries if entry.entity_id != entity_id]
+
+    def async_get_entity_id(self, domain: str, platform: str, unique_id: str):
+        for entry in self.entries:
+            if (
+                getattr(entry, "domain", domain) == domain
+                and getattr(entry, "platform", platform) == platform
+                and getattr(entry, "unique_id", None) == unique_id
+            ):
+                return entry.entity_id
+        return None
+
+    def async_get(self, entity_id: str):
+        for entry in self.entries:
+            if entry.entity_id == entity_id:
+                return entry
+        return None
+
+    def async_update_entity(self, entity_id: str, **kwargs) -> None:
+        self.updated.append((entity_id, kwargs))
+        entry = self.async_get(entity_id)
+        if entry is not None and "disabled_by" in kwargs:
+            entry.disabled_by = kwargs["disabled_by"]
 
 
 class DeviceRegistry:
@@ -269,12 +296,36 @@ class IntegrationHelperTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_network_probe_skips_unsupported_hostname(self) -> None:
         """Network probing should keep numeric values when hostname is unsupported."""
+        client = NetworkClient()
         supported, static_data = await integration._async_probe_network_sensors(
-            NetworkClient()
+            client
         )
 
         self.assertEqual({item.key for item in supported}, {"network_ip_address"})
-        self.assertEqual(static_data, {})
+        self.assertEqual(static_data["network_ip_address"]["value_int"], 0xC0A8012A)
+        self.assertTrue(all(param["key"] != "network_hostname" for param in client.params))
+
+    async def test_network_static_data_is_not_polled_by_coordinator(self) -> None:
+        """Network definitions should remain static and out of refresh batches."""
+        network_def = next(
+            item for item in sensors.NETWORK_SENSORS if item.key == "network_ip_address"
+        )
+        coordinator = integration.WeishauptDataUpdateCoordinator(
+            hass=object(),
+            client=FakeClient(set()),
+            sensor_definitions=[network_def],
+            static_data={
+                "network_ip_address": {
+                    "value_int": 0x0A6401E6,
+                    "value_hex": "0a6401e6",
+                }
+            },
+        )
+
+        data = await coordinator._async_update_data()
+
+        self.assertEqual(data["network_ip_address"]["value_int"], 0x0A6401E6)
+        self.assertEqual(coordinator.client.params, [])
 
     async def test_snapshot_export_writes_json_and_csv_without_credentials(self) -> None:
         """Snapshot export should write local files without credentials."""
@@ -317,6 +368,44 @@ class IntegrationHelperTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("wtc_brennerstarts_gesamt", json_text)
             self.assertIn("wtc_brennerstarts_gesamt", csv_text)
             self.assertNotIn("Admin123", json_text + csv_text)
+
+    async def test_local_metadata_export_writes_systable_and_summary_without_credentials(self) -> None:
+        """Metadata export should save raw metadata and a credential-free summary."""
+        class MetadataClient:
+            async def fetch_systable_csv(self) -> str:
+                return "name;mi;mx\nPlattenwaermetauscher;0x02;0x00\n"
+
+        coordinator = SimpleNamespace(
+            client=MetadataClient(),
+            heating_circuit_names={1: "Plattenwaermetauscher"},
+        )
+        entry = SimpleNamespace(
+            entry_id="entry-123",
+            data={
+                "host": "wem-sg.local",
+                "username": "admin",
+                "password": "Admin123",
+                "detected_heating_circuit_names": {"1": "Persisted HK1"},
+            },
+            options={},
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            hass = SimpleNamespace(
+                config=SimpleNamespace(
+                    path=lambda *parts: str(Path(tmpdir, *parts))
+                )
+            )
+
+            paths = await integration._async_export_local_metadata(
+                hass,
+                entry,
+                coordinator,
+            )
+
+            self.assertIn("systable_csv_path", paths)
+            summary_text = Path(paths["summary_json_path"]).read_text(encoding="utf-8")
+            self.assertIn("Plattenwaermetauscher", summary_text)
+            self.assertNotIn("Admin123", summary_text)
 
     async def test_cleanup_removes_stale_experimental_device_without_foreign_entries(
         self,
@@ -377,6 +466,74 @@ class IntegrationHelperTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(entity_registry.removed, [])
         self.assertEqual(device_registry.removed, [])
+
+    async def test_reenable_only_integration_disabled_default_entities(self) -> None:
+        """Default-enabled diagnostics should be re-enabled only for integration-disabled entries."""
+        entries = [
+            SimpleNamespace(
+                entity_id="sensor.date",
+                unique_id="entry-123_sg_device_date",
+                config_entry_id="entry-123",
+                domain="sensor",
+                platform="weishaupt_wtc_lan",
+                disabled_by="integration",
+            ),
+            SimpleNamespace(
+                entity_id="sensor.user_disabled",
+                unique_id="entry-123_network_ip_address",
+                config_entry_id="entry-123",
+                domain="sensor",
+                platform="weishaupt_wtc_lan",
+                disabled_by="user",
+            ),
+        ]
+        entity_registry = EntityRegistry(entries)
+        integration.er.async_get = lambda hass: entity_registry
+
+        await integration._async_reenable_integration_default_entities(
+            object(),
+            SimpleNamespace(entry_id="entry-123"),
+            {"sg_device_date", "network_ip_address"},
+        )
+
+        self.assertEqual(entity_registry.updated, [("sensor.date", {"disabled_by": None})])
+        self.assertIsNone(entries[0].disabled_by)
+        self.assertEqual(entries[1].disabled_by, "user")
+
+    async def test_cleanup_stale_readonly_hk_setpoint_sensors_only(self) -> None:
+        """Stale HK2/HK3 read-only setpoint sensors should be removed safely."""
+        entries = [
+            SimpleNamespace(
+                entity_id="sensor.hk2_duplicate",
+                unique_id="entry-123_hk_betriebsart_vorgabe",
+                config_entry_id="entry-123",
+                domain="sensor",
+                platform="weishaupt_wtc_lan",
+            ),
+            SimpleNamespace(
+                entity_id="select.hk2",
+                unique_id="entry-123_hk_betriebsart_vorgabe_select",
+                config_entry_id="entry-123",
+                domain="select",
+                platform="weishaupt_wtc_lan",
+            ),
+            SimpleNamespace(
+                entity_id="sensor.other",
+                unique_id="entry-123_hk_betriebsart_aktuell",
+                config_entry_id="entry-123",
+                domain="sensor",
+                platform="weishaupt_wtc_lan",
+            ),
+        ]
+        entity_registry = EntityRegistry(entries)
+        integration.er.async_get = lambda hass: entity_registry
+
+        await integration._async_cleanup_stale_readonly_operating_mode_sensors(
+            object(),
+            SimpleNamespace(entry_id="entry-123"),
+        )
+
+        self.assertEqual(entity_registry.removed, ["sensor.hk2_duplicate"])
 
 
 if __name__ == "__main__":

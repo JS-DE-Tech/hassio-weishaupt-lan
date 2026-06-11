@@ -37,6 +37,7 @@ from .const import (
     EXPERIMENTAL_WTC_DEVICE_SUFFIX,
     NETWORK_DEVICE_SUFFIX,
     SERVICE_EXPORT_EXPERIMENTAL_SNAPSHOT,
+    SERVICE_EXPORT_LOCAL_METADATA,
 )
 from .coordinator import WeishauptDataUpdateCoordinator
 from .heating_circuits import (
@@ -48,6 +49,7 @@ from .heating_circuits import (
     device_groups_from_systable_csv,
     heating_circuit_names_from_config,
     heating_circuit_names_from_systable_csv,
+    is_writable_operating_mode_definition,
     is_plausible_presence_value,
     probe_sensor_definitions_for_group,
     resolve_heating_circuit_names,
@@ -72,6 +74,20 @@ PLATFORMS: list[Platform] = [
 
 WTC_POWER_KEY = "wtc_waermeleistung_vpt"
 NETWORK_HOSTNAME_KEY = "network_hostname"
+DEFAULT_ENABLED_SENSOR_KEYS = {
+    "sg_device_date",
+    "sg_device_clock_time",
+    "network_hostname",
+    "network_ip_mode",
+    "network_ip_address",
+    "network_subnet_mask",
+    "network_gateway",
+    "network_dns_server",
+}
+STALE_READONLY_OPERATING_MODE_SENSOR_KEYS = {
+    "hk_betriebsart_vorgabe",
+    "hk3_betriebsart_vorgabe",
+}
 
 
 async def _async_detect_device_group(
@@ -230,7 +246,10 @@ async def _async_probe_network_sensors(
     ]
     results = await client.read_parameters(params)
     supported = [sensor_def for sensor_def in numeric_definitions if sensor_def.key in results]
-    static_data: dict[str, Any] = {}
+    static_data: dict[str, Any] = {
+        sensor_def.key: results[sensor_def.key]
+        for sensor_def in supported
+    }
 
     hostname_def = next(
         (sensor_def for sensor_def in NETWORK_SENSORS if sensor_def.key == NETWORK_HOSTNAME_KEY),
@@ -247,10 +266,14 @@ async def _async_probe_network_sensors(
             )
         except AttributeError:
             hostname_data = None
-        if hostname_data and hostname_data.get("value_string") is not None:
+        if hostname_data and str(hostname_data.get("value_string") or "").strip():
             supported.append(hostname_def)
             static_data[NETWORK_HOSTNAME_KEY] = hostname_data
 
+    _LOGGER.debug(
+        "Detected supported static network diagnostics: keys=%s",
+        sorted(static_data),
+    )
     return supported, static_data
 
 
@@ -399,14 +422,88 @@ async def _async_export_experimental_snapshot(
     return {"json_path": json_path, "csv_path": csv_path}
 
 
+async def _async_export_local_metadata(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: WeishauptDataUpdateCoordinator,
+) -> dict[str, str]:
+    """Export read-only local metadata used for name detection."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    base_dir = hass.config.path(
+        "weishaupt_wtc_lan_diagnostics",
+        "local_metadata",
+    )
+    os.makedirs(base_dir, exist_ok=True)
+
+    systable_csv = await coordinator.client.fetch_systable_csv()
+    parsed_names = heating_circuit_names_from_systable_csv(systable_csv)
+    persisted_names = heating_circuit_names_from_config(
+        entry.data.get(CONF_DETECTED_HEATING_CIRCUIT_NAMES, {})
+    )
+    use_detected_names = bool(
+        entry.options.get(
+            CONF_USE_DETECTED_HEATING_CIRCUIT_NAMES,
+            entry.data.get(
+                CONF_USE_DETECTED_HEATING_CIRCUIT_NAMES,
+                DEFAULT_USE_DETECTED_HEATING_CIRCUIT_NAMES,
+            ),
+        )
+    )
+    overrides = {
+        1: entry.options.get(CONF_HK1_NAME, entry.data.get(CONF_HK1_NAME, "")),
+        2: entry.options.get(CONF_HK2_NAME, entry.data.get(CONF_HK2_NAME, "")),
+        3: entry.options.get(CONF_HK3_NAME, entry.data.get(CONF_HK3_NAME, "")),
+    }
+    detected_for_resolution = parsed_names or persisted_names
+    resolved_names = resolve_heating_circuit_names(
+        overrides,
+        detected_for_resolution,
+        use_detected_names,
+        DEFAULT_HEATING_CIRCUIT_NAMES,
+    )
+
+    written: dict[str, str] = {}
+    if systable_csv is not None:
+        csv_path = os.path.join(base_dir, f"{timestamp}-systable.csv")
+        with open(csv_path, "w", encoding="utf-8", newline="") as csv_file:
+            csv_file.write(systable_csv)
+        written["systable_csv_path"] = csv_path
+
+    summary_path = os.path.join(
+        base_dir,
+        f"{timestamp}-detected-heating-circuit-names.json",
+    )
+    summary = {
+        "snapshot_timestamp": datetime.now(timezone.utc).isoformat(),
+        "integration_version": _integration_version(),
+        "host_identifier": entry.data.get(CONF_HOST, ""),
+        "parser_source": "systable.csv" if systable_csv is not None else "persisted",
+        "systable_available": systable_csv is not None,
+        "systable_character_length": len(systable_csv) if systable_csv is not None else 0,
+        "parsed_heating_circuit_names": {
+            str(key): value for key, value in parsed_names.items()
+        },
+        "persisted_heating_circuit_names": {
+            str(key): value for key, value in persisted_names.items()
+        },
+        "use_detected_heating_circuit_names": use_detected_names,
+        "resolved_heating_circuit_names": {
+            str(key): value for key, value in resolved_names.items()
+        },
+    }
+    with open(summary_path, "w", encoding="utf-8") as summary_file:
+        json.dump(summary, summary_file, indent=2, sort_keys=True, ensure_ascii=False)
+    written["summary_json_path"] = summary_path
+    return written
+
+
 async def _async_register_services(hass: HomeAssistant) -> None:
     """Register integration services once."""
     domain_data = hass.data.setdefault(DOMAIN, {})
-    if domain_data.get("_snapshot_service_registered"):
+    if domain_data.get("_services_registered"):
         return
 
-    async def _handle_export(call) -> None:
-        entry_id = call.data.get("entry_id") if hasattr(call, "data") else None
+    def _entry_and_coordinator(entry_id: str | None) -> tuple[ConfigEntry | None, WeishauptDataUpdateCoordinator | None]:
         coordinators = {
             key: value
             for key, value in hass.data.get(DOMAIN, {}).items()
@@ -414,23 +511,41 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         }
         if entry_id is None:
             entry_id = next(iter(coordinators), None)
+        if entry_id is None:
+            return None, None
         coordinator = coordinators.get(entry_id)
-        if coordinator is None:
-            _LOGGER.warning("No Weishaupt coordinator available for snapshot export")
-            return
         entry = hass.config_entries.async_get_entry(entry_id)
-        if entry is None:
-            _LOGGER.warning("No Weishaupt config entry available for snapshot export")
+        return entry, coordinator
+
+    async def _handle_snapshot_export(call) -> None:
+        entry_id = call.data.get("entry_id") if hasattr(call, "data") else None
+        entry, coordinator = _entry_and_coordinator(entry_id)
+        if entry is None or coordinator is None:
+            _LOGGER.warning("No Weishaupt coordinator available for snapshot export")
             return
         paths = await _async_export_experimental_snapshot(hass, entry, coordinator)
         _LOGGER.info("Exported Weishaupt experimental snapshot: %s", paths)
 
+    async def _handle_local_metadata_export(call) -> None:
+        entry_id = call.data.get("entry_id") if hasattr(call, "data") else None
+        entry, coordinator = _entry_and_coordinator(entry_id)
+        if entry is None or coordinator is None:
+            _LOGGER.warning("No Weishaupt coordinator available for metadata export")
+            return
+        paths = await _async_export_local_metadata(hass, entry, coordinator)
+        _LOGGER.info("Exported Weishaupt local metadata: %s", paths)
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_EXPORT_EXPERIMENTAL_SNAPSHOT,
-        _handle_export,
+        _handle_snapshot_export,
     )
-    domain_data["_snapshot_service_registered"] = True
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_EXPORT_LOCAL_METADATA,
+        _handle_local_metadata_export,
+    )
+    domain_data["_services_registered"] = True
 
 
 async def _async_cleanup_inactive_devices(
@@ -463,6 +578,92 @@ async def _async_cleanup_inactive_devices(
 
         if not er.async_entries_for_device(entity_registry, device.id):
             device_registry.async_remove_device(device.id)
+
+
+def _entity_registry_entry_is_integration_disabled(entry: Any) -> bool:
+    """Return True when an entity was disabled by the integration default."""
+    disabled_by = getattr(entry, "disabled_by", None)
+    integration_disabled = getattr(
+        getattr(er, "RegistryEntryDisabler", None),
+        "INTEGRATION",
+        "integration",
+    )
+    return disabled_by in ("integration", integration_disabled)
+
+
+def _entity_id_for_unique_id(entity_registry: Any, domain: str, unique_id: str) -> str | None:
+    """Find an entity_id for a unique_id across real and test registries."""
+    get_entity_id = getattr(entity_registry, "async_get_entity_id", None)
+    if get_entity_id is not None:
+        entity_id = get_entity_id(domain, DOMAIN, unique_id)
+        if entity_id is not None:
+            return entity_id
+    entries = getattr(entity_registry, "entries", [])
+    for entry in entries:
+        if getattr(entry, "domain", domain) == domain and getattr(entry, "unique_id", None) == unique_id:
+            return getattr(entry, "entity_id", None)
+    return None
+
+
+def _entity_registry_entry(entity_registry: Any, entity_id: str) -> Any:
+    """Return a registry entry from real and test registries."""
+    async_get = getattr(entity_registry, "async_get", None)
+    if async_get is not None:
+        return async_get(entity_id)
+    for entry in getattr(entity_registry, "entries", []):
+        if getattr(entry, "entity_id", None) == entity_id:
+            return entry
+    return None
+
+
+async def _async_reenable_integration_default_entities(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    keys: set[str],
+) -> None:
+    """Re-enable selected entities only when disabled by integration default."""
+    entity_registry = er.async_get(hass)
+    for key in keys:
+        entity_id = _entity_id_for_unique_id(
+            entity_registry,
+            "sensor",
+            f"{entry.entry_id}_{key}",
+        )
+        if entity_id is None:
+            continue
+        entry_obj = _entity_registry_entry(entity_registry, entity_id)
+        if entry_obj is None:
+            continue
+        if getattr(entry_obj, "config_entry_id", entry.entry_id) != entry.entry_id:
+            continue
+        if not _entity_registry_entry_is_integration_disabled(entry_obj):
+            continue
+        update_entity = getattr(entity_registry, "async_update_entity", None)
+        if update_entity is not None:
+            update_entity(entity_id, disabled_by=None)
+        elif hasattr(entry_obj, "disabled_by"):
+            entry_obj.disabled_by = None
+
+
+async def _async_cleanup_stale_readonly_operating_mode_sensors(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """Remove stale read-only HK2/HK3 operating-mode target sensor entities."""
+    entity_registry = er.async_get(hass)
+    for key in STALE_READONLY_OPERATING_MODE_SENSOR_KEYS:
+        entity_id = _entity_id_for_unique_id(
+            entity_registry,
+            "sensor",
+            f"{entry.entry_id}_{key}",
+        )
+        if entity_id is None:
+            continue
+        entry_obj = _entity_registry_entry(entity_registry, entity_id)
+        if entry_obj is not None and getattr(entry_obj, "config_entry_id", entry.entry_id) != entry.entry_id:
+            continue
+        _LOGGER.debug("Removing stale read-only operating-mode sensor %s", entity_id)
+        entity_registry.async_remove(entity_id)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -527,6 +728,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     systable_csv = await client.fetch_systable_csv()
+    _LOGGER.debug(
+        "systable.csv fetch during setup: available=%s chars=%s",
+        systable_csv is not None,
+        len(systable_csv) if systable_csv is not None else 0,
+    )
     systable_groups = (
         device_groups_from_systable_csv(systable_csv)
         if systable_csv is not None
@@ -545,6 +751,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         detected_heating_circuit_names,
         use_detected_heating_circuit_names,
         DEFAULT_HEATING_CIRCUIT_NAMES,
+    )
+    _LOGGER.debug(
+        "Heating-circuit name detection: persisted=%s detected=%s resolved=%s",
+        persisted_heating_circuit_names,
+        detected_heating_circuit_names,
+        heating_circuit_names,
     )
 
     active_heating_circuits = [1]
@@ -647,6 +859,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass,
         entry,
         inactive_suffixes,
+    )
+    await _async_cleanup_stale_readonly_operating_mode_sensors(hass, entry)
+    await _async_reenable_integration_default_entities(
+        hass,
+        entry,
+        DEFAULT_ENABLED_SENSOR_KEYS,
     )
 
     return True

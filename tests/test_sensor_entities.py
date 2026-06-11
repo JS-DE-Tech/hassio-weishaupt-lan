@@ -58,6 +58,16 @@ sensor_component.SensorDeviceClass = SensorDeviceClass()
 sensor_component.SensorStateClass = SensorStateClass()
 sys.modules["homeassistant.components.sensor"] = sensor_component
 
+select_component = types.ModuleType("homeassistant.components.select")
+
+
+class SelectEntity:
+    """Minimal select entity stub."""
+
+
+select_component.SelectEntity = SelectEntity
+sys.modules["homeassistant.components.select"] = select_component
+
 config_entries = types.ModuleType("homeassistant.config_entries")
 config_entries.ConfigEntry = object
 sys.modules["homeassistant.config_entries"] = config_entries
@@ -137,6 +147,9 @@ sys.modules["custom_components.weishaupt_wtc_lan.coordinator"] = coordinator_mod
 
 sensor = load_module(
     "custom_components.weishaupt_wtc_lan.sensor", PACKAGE_ROOT / "sensor.py"
+)
+select_platform = load_module(
+    "custom_components.weishaupt_wtc_lan.select", PACKAGE_ROOT / "select.py"
 )
 
 
@@ -275,6 +288,74 @@ class SensorEntityTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(time_entity.available)
         self.assertEqual(time_entity.native_value, "17:25")
 
+    def test_device_date_clock_time_and_combined_timestamp_use_corrected_order(self) -> None:
+        """Raw date registers should map year/month/day in validated hardware order."""
+        self.assertEqual(sensor_by_key("sg_datum_jahr").os, 0x02)
+        self.assertEqual(sensor_by_key("sg_datum_monat").os, 0x03)
+        self.assertEqual(sensor_by_key("sg_datum_tag").os, 0x04)
+        coordinator = SimpleNamespace(
+            data={
+                "sg_uhrzeit_stunden": {"value_int": 22, "value_hex": "16"},
+                "sg_uhrzeit_minuten": {"value_int": 26, "value_hex": "1a"},
+                "sg_datum_jahr": {"value_int": 26, "value_hex": "1a"},
+                "sg_datum_monat": {"value_int": 6, "value_hex": "06"},
+                "sg_datum_tag": {"value_int": 11, "value_hex": "0b"},
+            },
+        )
+        entry = SimpleNamespace(entry_id="entry-123")
+        date_entity = sensor.WeishauptSensorEntity(
+            coordinator=coordinator,
+            sensor_def=sensor_by_key("sg_device_date"),
+            entry=entry,
+        )
+        clock_entity = sensor.WeishauptSensorEntity(
+            coordinator=coordinator,
+            sensor_def=sensor_by_key("sg_device_clock_time"),
+            entry=entry,
+        )
+        timestamp_entity = sensor.WeishauptSensorEntity(
+            coordinator=coordinator,
+            sensor_def=sensor_by_key("sg_device_time"),
+            entry=entry,
+        )
+
+        self.assertEqual(date_entity.native_value, "11.06.2026")
+        self.assertEqual(clock_entity.native_value, "22:26")
+        self.assertEqual(timestamp_entity.native_value, "2026-06-11T22:26:00+00:00")
+
+    def test_invalid_derived_date_is_unavailable(self) -> None:
+        """Invalid component combinations should make the derived date unavailable."""
+        entity = sensor.WeishauptSensorEntity(
+            coordinator=SimpleNamespace(
+                data={
+                    "sg_datum_jahr": {"value_int": 26, "value_hex": "1a"},
+                    "sg_datum_monat": {"value_int": 2, "value_hex": "02"},
+                    "sg_datum_tag": {"value_int": 31, "value_hex": "1f"},
+                }
+            ),
+            sensor_def=sensor_by_key("sg_device_date"),
+            entry=SimpleNamespace(entry_id="entry-123"),
+        )
+
+        self.assertFalse(entity.available)
+        self.assertIsNone(entity.native_value)
+
+    def test_derived_date_time_defaults_and_raw_component_defaults(self) -> None:
+        """Derived date/time should be enabled while raw components remain disabled."""
+        self.assertTrue(sensor_by_key("sg_device_date").entity_registry_enabled_default)
+        self.assertTrue(
+            sensor_by_key("sg_device_clock_time").entity_registry_enabled_default
+        )
+        self.assertFalse(sensor_by_key("sg_device_time").entity_registry_enabled_default)
+        for key in (
+            "sg_uhrzeit_stunden",
+            "sg_uhrzeit_minuten",
+            "sg_datum_tag",
+            "sg_datum_monat",
+            "sg_datum_jahr",
+        ):
+            self.assertFalse(sensor_by_key(key).entity_registry_enabled_default)
+
     def test_network_values_render_on_network_device(self) -> None:
         """Network diagnostics should decode IPv4 values and use their own device."""
         ip_def = next(
@@ -315,6 +396,37 @@ class SensorEntityTests(unittest.IsolatedAsyncioTestCase):
             ip_entity.device_info["identifiers"],
             {("weishaupt_wtc_lan", "entry-123_network")},
         )
+        self.assertEqual(ip_entity.device_info["name"], "Weishaupt Systemgerät Netzwerk")
+
+    def test_network_numeric_entities_enabled_and_ip_mode_raw_3_is_dhcp(self) -> None:
+        """Network numeric diagnostics should be enabled and map raw 3 to DHCP."""
+        mode_def = next(
+            item for item in sensors.NETWORK_SENSORS if item.key == "network_ip_mode"
+        )
+        self.assertFalse(any(item.poll for item in sensors.NETWORK_SENSORS))
+        self.assertTrue(mode_def.entity_registry_enabled_default)
+        entity = sensor.WeishauptSensorEntity(
+            coordinator=SimpleNamespace(
+                data={"network_ip_mode": {"value_int": 3, "value_hex": "03"}}
+            ),
+            sensor_def=mode_def,
+            entry=SimpleNamespace(entry_id="entry-123"),
+        )
+
+        self.assertEqual(entity.native_value, "DHCP")
+
+    def test_system_operating_mode_current_mirrors_existing_data(self) -> None:
+        """System operating-mode display should mirror the existing writable register."""
+        entity = sensor.WeishauptSensorEntity(
+            coordinator=SimpleNamespace(
+                data={"sg_systembetriebsart": {"value_int": 2, "value_hex": "02"}}
+            ),
+            sensor_def=sensor_by_key("sg_systembetriebsart_aktuell"),
+            entry=SimpleNamespace(entry_id="entry-123"),
+        )
+
+        self.assertTrue(entity.available)
+        self.assertEqual(entity.native_value, "Sommer")
 
     def test_experimental_zero_is_valid_and_sentinel_is_unavailable(self) -> None:
         """Raw zero should remain valid while sentinel values are unavailable."""
@@ -370,6 +482,77 @@ class SensorEntityTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(added, [])
         self.assertEqual(len(registry.created), 1)
+
+    async def test_sensor_setup_skips_writable_setpoints_but_keeps_actual_states(self) -> None:
+        """Read-only duplicate setpoint sensors should not be created for HK circuits."""
+        registry = DeviceRegistry()
+        sensor.dr.async_get = lambda hass: registry
+        added: list = []
+        coordinator = SimpleNamespace(
+            sensor_definitions=[
+                sensor_by_key("sg_betriebsart_hk1_vorgabe"),
+                sensor_by_key("sg_betriebsart_hk1_aktuell"),
+                next(item for item in sensors.HK_SENSORS if item.key == "hk_betriebsart_vorgabe"),
+                next(item for item in sensors.HK_SENSORS if item.key == "hk_betriebsart_aktuell"),
+            ],
+            experimental_wtc_registers=[],
+            extended_experimental_wtc_registers=[],
+        )
+        hass = SimpleNamespace(data={"weishaupt_wtc_lan": {"entry-123": coordinator}})
+
+        await sensor.async_setup_entry(
+            hass,
+            SimpleNamespace(entry_id="entry-123"),
+            lambda entities: added.extend(entities),
+        )
+
+        self.assertEqual(
+            {entity._attr_unique_id for entity in added},
+            {
+                "entry-123_sg_betriebsart_hk1_aktuell",
+                "entry-123_hk_betriebsart_aktuell",
+            },
+        )
+
+    async def test_select_setup_keeps_writable_hk1_hk2_hk3_setpoints(self) -> None:
+        """Writable operating-mode selects should remain for every detected circuit."""
+        hk2 = next(item for item in sensors.HK_SENSORS if item.key == "hk_betriebsart_vorgabe")
+        hk3 = heating_circuits.build_hk_sensor_definitions(3, 0x02)[0]
+        coordinator = SimpleNamespace(
+            sensor_definitions=[
+                sensor_by_key("sg_betriebsart_hk1_vorgabe"),
+                hk2,
+                hk3,
+                sensor_by_key("sg_systembetriebsart"),
+            ],
+            data={
+                "sg_betriebsart_hk1_vorgabe": {"value_int": 5, "value_hex": "05"},
+                "hk_betriebsart_vorgabe": {"value_int": 2, "value_hex": "02"},
+                "hk3_betriebsart_vorgabe": {"value_int": 2, "value_hex": "02"},
+                "sg_systembetriebsart": {"value_int": 2, "value_hex": "02"},
+            },
+        )
+        added: list = []
+
+        await select_platform.async_setup_entry(
+            SimpleNamespace(data={"weishaupt_wtc_lan": {"entry-123": coordinator}}),
+            SimpleNamespace(entry_id="entry-123"),
+            lambda entities: added.extend(entities),
+        )
+
+        self.assertEqual(
+            {entity._sensor_def.key for entity in added},
+            {
+                "sg_betriebsart_hk1_vorgabe",
+                "hk_betriebsart_vorgabe",
+                "hk3_betriebsart_vorgabe",
+                "sg_systembetriebsart",
+            },
+        )
+        hk2_select = next(
+            entity for entity in added if entity._sensor_def.key == "hk_betriebsart_vorgabe"
+        )
+        self.assertEqual(hk2_select.current_option, "Zeitprogramm 1")
 
 
 if __name__ == "__main__":

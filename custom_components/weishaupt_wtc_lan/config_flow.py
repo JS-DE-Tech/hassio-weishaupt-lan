@@ -244,8 +244,15 @@ async def _async_fetch_detected_heating_circuit_names(
         _LOGGER.debug("Could not fetch systable.csv for detected names", exc_info=True)
         return None
     if systable_csv is None:
+        _LOGGER.debug("systable.csv unavailable for detected-name refresh")
         return None
-    return heating_circuit_names_from_systable_csv(systable_csv)
+    detected_names = heating_circuit_names_from_systable_csv(systable_csv)
+    _LOGGER.debug(
+        "Fetched systable.csv for detected-name refresh: chars=%s names=%s",
+        len(systable_csv),
+        detected_names,
+    )
+    return detected_names
 
 
 class WeishauptWemConfigFlow(ConfigFlow, domain=DOMAIN):

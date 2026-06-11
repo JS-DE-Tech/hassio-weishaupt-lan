@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import replace
+import logging
 import re
 
 from .const import NETWORK_DEVICE_SUFFIX
@@ -15,6 +16,8 @@ from .sensors import (
     WTC_SENSORS,
     WeishauptSensorDefinition,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 HK3_MODBUS_OFFSET = 30
 
@@ -80,6 +83,13 @@ SELECT_SENSOR_KEYS = {
     "sg_systembetriebsart",
 }
 
+WRITABLE_OPERATING_MODE_SENSOR_KEYS = {
+    "sg_betriebsart_hk1_vorgabe",
+    "hk_betriebsart_vorgabe",
+    "hk3_betriebsart_vorgabe",
+    "sg_systembetriebsart",
+}
+
 NETWORK_SENSOR_KEYS = {sensor_def.key for sensor_def in NETWORK_SENSORS}
 
 PRESENCE_SENTINELS = {
@@ -112,6 +122,19 @@ _SYSTABLE_NAME_NOISE = {
     "wert",
     "vs",
 }
+
+_SYSTABLE_NAME_HEADERS = {
+    "bezeichnung",
+    "display",
+    "displayname",
+    "label",
+    "name",
+    "text",
+    "title",
+}
+
+_SYSTABLE_MI_HEADERS = {"mi", "moduleindex", "module_index", "module"}
+_SYSTABLE_MX_HEADERS = {"mx", "memberindex", "member_index", "member"}
 
 
 def heating_circuit_for_sensor(sensor_def: WeishauptSensorDefinition) -> int | None:
@@ -147,6 +170,22 @@ def device_suffix_for_sensor(sensor_def: WeishauptSensorDefinition) -> str:
     if sensor_def.key in WARM_WATER_SENSOR_KEYS:
         return "ww"
     return sensor_def.group.value
+
+
+def is_writable_operating_mode_definition(
+    sensor_def: WeishauptSensorDefinition,
+) -> bool:
+    """Return True for writable operating-mode target definitions."""
+    return (
+        sensor_def.key in WRITABLE_OPERATING_MODE_SENSOR_KEYS
+        or (
+            sensor_def.mi == 0x02
+            and sensor_def.ox == 0x2533
+            and sensor_def.os == 0x02
+            and sensor_def.vs == 1
+            and sensor_def.value_map is not None
+        )
+    )
 
 
 def logical_group_for_sensor(sensor_def: WeishauptSensorDefinition) -> str:
@@ -224,6 +263,67 @@ def _systable_rows(csv_text: str) -> list[list[str]]:
     return rows
 
 
+def _normalized_header(value: str) -> str:
+    """Normalize a CSV header name for conservative field matching."""
+    value = value.strip().strip('"').strip("'").casefold()
+    return re.sub(r"[^a-z0-9_]", "", value)
+
+
+def _looks_like_header(row: list[str]) -> bool:
+    """Return True when a row looks like CSV headers."""
+    normalized = {_normalized_header(value) for value in row}
+    return bool(
+        normalized
+        & (
+            _SYSTABLE_NAME_HEADERS
+            | _SYSTABLE_MI_HEADERS
+            | _SYSTABLE_MX_HEADERS
+        )
+    )
+
+
+def _parse_systable_int(value: str) -> int | None:
+    """Parse decimal or hex-ish metadata integers."""
+    match = re.search(r"(?:0x)?[0-9a-fA-F]+", value or "")
+    if match is None:
+        return None
+    raw = match.group(0)
+    base = 16 if raw.lower().startswith("0x") else 10
+    try:
+        return int(raw, base)
+    except ValueError:
+        return None
+
+
+def _heating_circuit_from_address_fields(fields: dict[str, str]) -> int | None:
+    """Return HK circuit from confirmed MI/MX metadata fields."""
+    mi_value: int | None = None
+    mx_value: int | None = None
+    for key, value in fields.items():
+        normalized = _normalized_header(key)
+        if normalized in _SYSTABLE_MI_HEADERS:
+            mi_value = _parse_systable_int(value)
+        elif normalized in _SYSTABLE_MX_HEADERS:
+            mx_value = _parse_systable_int(value)
+
+    if mi_value == 0x02 and mx_value in (0x00, 0x01, 0x02):
+        return int(mx_value) + 1
+    return None
+
+
+def _heating_circuit_from_inline_address(raw_line: str) -> int | None:
+    """Return HK circuit from inline MI/MX text when real metadata uses labels."""
+    mi_match = re.search(r"\bMI\s*=?\s*(0x[0-9a-fA-F]+|\d+)", raw_line, re.IGNORECASE)
+    mx_match = re.search(r"\bMX\s*=?\s*(0x[0-9a-fA-F]+|\d+)", raw_line, re.IGNORECASE)
+    if not mi_match or not mx_match:
+        return None
+    mi_value = _parse_systable_int(mi_match.group(1))
+    mx_value = _parse_systable_int(mx_match.group(1))
+    if mi_value == 0x02 and mx_value in (0x00, 0x01, 0x02):
+        return int(mx_value) + 1
+    return None
+
+
 def _clean_systable_name(value: str) -> str:
     """Normalize a possible display name from a systable field."""
     value = value.strip().strip('"').strip("'").strip()
@@ -250,22 +350,46 @@ def _is_systable_name_candidate(value: str) -> bool:
 def heating_circuit_names_from_systable_csv(csv_text: str | None) -> dict[int, str]:
     """Extract heating-circuit display names from systable.csv when present."""
     if not csv_text:
+        _LOGGER.debug("No systable.csv content available for heating-circuit names")
         return {}
 
+    rows = _systable_rows(csv_text)
+    _LOGGER.debug(
+        "Parsing systable.csv for heating-circuit names: chars=%s rows=%s",
+        len(csv_text),
+        len(rows),
+    )
+    header: list[str] | None = None
     names: dict[int, str] = {}
-    for row in _systable_rows(csv_text):
+    for row in rows:
         raw_fields = [field.strip() for field in row if field.strip()]
         if not raw_fields:
             continue
+        if header is None and _looks_like_header(raw_fields):
+            header = raw_fields
+            continue
+
+        fields_by_header = (
+            dict(zip(header, raw_fields, strict=False)) if header is not None else {}
+        )
         raw_line = " ".join(raw_fields)
         marker = _HK_MARKER_RE.search(raw_line)
-        if marker is None:
+        if marker is not None:
+            circuit = int(marker.group(1))
+        else:
+            circuit = _heating_circuit_from_address_fields(fields_by_header)
+            if circuit is None:
+                circuit = _heating_circuit_from_inline_address(raw_line)
+        if circuit is None:
             continue
-        circuit = int(marker.group(1))
         if circuit in names:
             continue
 
-        candidates = [_clean_systable_name(field) for field in raw_fields]
+        candidates: list[str] = []
+        for key, value in fields_by_header.items():
+            if _normalized_header(key) in _SYSTABLE_NAME_HEADERS:
+                candidates.append(_clean_systable_name(value))
+        candidates.extend(_clean_systable_name(field) for field in raw_fields)
         candidates.extend(
             _clean_systable_name(part)
             for part in re.split(r"->|:|=", raw_line)
@@ -274,6 +398,7 @@ def heating_circuit_names_from_systable_csv(csv_text: str | None) -> dict[int, s
             if _is_systable_name_candidate(candidate):
                 names[circuit] = candidate
                 break
+    _LOGGER.debug("Parsed heating-circuit names from systable.csv: %s", names)
     return names
 
 
@@ -326,6 +451,13 @@ def resolve_heating_circuit_names(
             resolved[circuit] = detected
             continue
         resolved[circuit] = fallbacks[circuit]
+    _LOGGER.debug(
+        "Resolved heating-circuit names: overrides=%s detected=%s use_detected=%s resolved=%s",
+        overrides,
+        detected_names,
+        use_detected_names,
+        resolved,
+    )
     return resolved
 
 

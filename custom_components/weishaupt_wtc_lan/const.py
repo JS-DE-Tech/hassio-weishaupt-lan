@@ -16,6 +16,7 @@ CONF_USE_DETECTED_HEATING_CIRCUIT_NAMES = "use_detected_heating_circuit_names"
 EXPERIMENTAL_WTC_DEVICE_SUFFIX = "wtc_experimental"
 NETWORK_DEVICE_SUFFIX = "network"
 SERVICE_EXPORT_EXPERIMENTAL_SNAPSHOT = "export_experimental_snapshot"
+SERVICE_EXPORT_LOCAL_METADATA = "export_local_metadata"
 
 DEFAULT_USERNAME = "admin"
 DEFAULT_PASSWORD = "Admin123"
