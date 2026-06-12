@@ -16,7 +16,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .heating_circuits import SELECT_SENSOR_KEYS
+from .heating_circuits import SELECT_SENSOR_KEYS, is_writable_operating_mode_definition
 from .sensor import (
     _device_identifier,
     _device_model,
@@ -40,16 +40,7 @@ async def async_setup_entry(
 
     # Implement writable Betriebart selects for the system and detected circuits.
     for sensor_def in coordinator.sensor_definitions:
-        if (
-            sensor_def.key in SELECT_SENSOR_KEYS
-            or (
-                sensor_def.mi == 0x02
-                and sensor_def.ox == 0x2533
-                and sensor_def.os == 0x02
-                and sensor_def.vs == 1
-                and sensor_def.value_map
-            )
-        ):
+        if is_writable_operating_mode_definition(sensor_def):
             entities.append(
                 WeishauptSelectEntity(
                     coordinator=coordinator, sensor_def=sensor_def, entry=entry

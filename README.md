@@ -1,11 +1,10 @@
-# Weishaupt WTC LAN for Home Assistant
+<p align="center">
+  <img src="icon.png"
+       alt="Weishaupt WTC LAN"
+       width="140">
+</p>
 
-<p align="left">
-  <img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/system.png"
-       alt="Weishaupt WTC heating system"
-       width="620">
-</p>
-</p>
+# Weishaupt WTC LAN for Home Assistant
 
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Custom%20Integration-41BDF5?logo=home-assistant&logoColor=white)](https://www.home-assistant.io/)
 [![HACS](https://img.shields.io/badge/HACS-Custom%20Repository-41BDF5)](https://hacs.xyz/)
@@ -13,9 +12,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](https://github.com/JS-DE-Tech/hacs-weishaupt-lan/blob/main/LICENSE)
 [![Support via PayPal](https://img.shields.io/badge/Support%20via-PayPal-0070BA?logo=paypal&logoColor=white)](https://paypal.me/JensSaffrich)
 
-Custom Home Assistant integration for Weishaupt heating systems using the local **CanApiJson** protocol (JSON over HTTP).
-
-The integration communicates directly with the **Weishaupt Systemgerät (SG)** on the local network. No cloud connection is required.
+Local Home Assistant integration for Weishaupt heating systems. The integration
+communicates directly with the Weishaupt system device (SG) over the local LAN
+and reads heating data through the CanApiJson JSON interface. No cloud
+connection is required.
 
 > [!WARNING]
 > Use this integration at your own risk. Some entities can write values to the heating system. Always verify changes directly on your installation.
@@ -156,15 +156,19 @@ Once these requirements are met, the integration can be added to Home Assistant.
 3. Open the menu in the upper-right corner.
 4. Select **Custom repositories**.
 5. Add this repository URL and select **Integration** as the category.
-6. Install **Weishaupt WTC**.
+6. Install **Weishaupt WTC LAN**.
 7. Restart Home Assistant.
+
+The local `icon.png` is included for repository and HACS presentation. It does
+not automatically create a native Home Assistant frontend brand icon for the
+custom domain `weishaupt_wtc_lan`.
 
 ### Manual Installation
 
 1. Copy the folder:
 
    ```text
-   custom_components/weishaupt_wtc
+   custom_components/weishaupt_wtc_lan
    ```
 
    to:
@@ -179,15 +183,62 @@ Once these requirements are met, the integration can be added to Home Assistant.
 
 1. Go to **Settings** → **Devices & Services**.
 2. Select **Add Integration**.
-3. Search for **Weishaupt WTC**.
+3. Search for **Weishaupt WTC LAN**.
 4. Enter the IP address or hostname of the Systemgerät.
-5. Optionally adjust the username, password, polling interval, and heating-circuit display names.
+5. Optionally adjust the username, password, polling interval, and experimental diagnostics toggles.
+6. Review the detected heating-circuit display names and edit them if needed.
 
 The polling interval can be configured from **10 to 600 seconds** in steps of **10 seconds**.
 
-The same options can be changed later from the integration options. Saving the options reloads the integration so the new polling interval and display names take effect without removing the integration.
+The same options can be changed later from the integration options. Saving the options reloads the integration so the new polling interval, display names, and diagnostic options take effect without removing the integration.
 
 Heating-circuit names are display names only. Entity unique IDs, device identifiers, and CanApiJson register addresses remain stable when names are changed.
+
+## Optional Experimental WTC Diagnostics
+
+The integration can optionally expose a separate read-only diagnostics device
+containing selected unconfirmed WTC registers.
+
+Enable this feature from the integration options:
+
+```text
+Enable experimental read-only WTC sensors
+```
+
+The experimental sensors are intended for real-hardware correlation testing.
+They expose raw values, address metadata, confidence hints, and derived raw
+attributes but do not provide write support.
+
+The feature is disabled by default. When disabled, no experimental device,
+entities, setup probes, or polling requests are added.
+
+A second option is available for a broader explicitly curated catalog:
+
+```text
+Enable extended experimental read-only WTC sensors
+```
+
+This option is also disabled by default and is only evaluated when the curated
+experimental option is enabled. The extended catalog is capped at 100 explicitly
+listed entities and is currently empty because the committed discovery artifacts
+are broad scan outputs, not a defensible curated address list.
+
+For correlation work, call the Home Assistant service:
+
+```text
+weishaupt_wtc_lan.export_experimental_snapshot
+```
+
+It writes JSON and CSV files under:
+
+```text
+/config/weishaupt_wtc_lan_diagnostics/
+```
+
+The snapshot includes regular WTC values, network diagnostics when available,
+curated experimental values, and extended experimental values when enabled. It
+does not export passwords, authorization headers, tokens, cookies, or other
+credentials.
 
 ## Device Detection and Naming
 
@@ -199,7 +250,34 @@ When available, the local read-only inventory file:
 /sd/systable.csv
 ```
 
-is used to detect installed modules and to derive default display names.
+is used to detect installed modules and to derive default display names. Name
+resolution is:
+
+```text
+explicit non-empty user override
+-> detected systable.csv name
+-> generic fallback
+```
+
+Detected heating-circuit names are stored separately from manual overrides as a
+small parsed mapping, for example `{ "1": "Plattenwaermetauscher" }`. The raw
+`systable.csv` file is not stored. Opening the integration options refreshes the
+mapping when the file can be fetched; if the refresh fails, the last successful
+detected names remain available.
+
+The parser supports explicit HK markers, confirmed metadata fields that expose
+`MI=0x02` with `MX=0x00`, `0x01`, or `0x02`, and the real local metadata format
+confirmed on the validated installation:
+
+```text
+M02_*.BIN;<display name>;<circuit number>
+```
+
+Only `M02_*.BIN` rows are interpreted as heating-circuit display names, so a
+warm-water row such as `M03_*.BIN;Warmwasserspeicher;1` is not treated as HK1.
+The same inventory can also provide optional logical display names for the
+Systemgeraet, Warmwasser, network device, and WTC boiler while keeping stable
+device identifiers and entity unique IDs unchanged.
 
 Observed example from a real installation:
 
@@ -209,6 +287,7 @@ Observed example from a real installation:
 | HK2 | `Fussbodenheizung` |
 | HK3 | `Heizkoerper` |
 | Domestic hot water | `Warmwasserspeicher` |
+| Network | `GATEWAY0` |
 | Boiler | `WE0` |
 
 External heating circuits are only created when the corresponding CanApiJson module returns plausible responses.
@@ -222,6 +301,7 @@ Optional modules such as Solar are only created when inventory detection and set
 The Systemgerät device contains system-wide values:
 
 - system operating mode
+- current system operating-mode display
 - outdoor temperature
 - heating demand
 - domestic-hot-water demand
@@ -229,7 +309,18 @@ The Systemgerät device contains system-wide values:
 - upper and lower buffer-storage temperatures
 - selected cascade values
 - CANopen error/warning diagnostic block
-- date and time values
+- combined date/time value
+- separate diagnostic device date and clock-time values
+
+`Datum Anlage` and `Uhrzeit Anlage` are derived from the existing raw
+Systemgeraet date/time component registers and are enabled by default. The raw
+component entities remain disabled by default. Validated date byte order is:
+
+```text
+01/00/2563/02 -> year offset
+01/00/2563/03 -> month
+01/00/2563/04 -> day
+```
 
 ### HK1 — Integrated Heating Circuit
 
@@ -261,6 +352,10 @@ Technical addressing:
 HK2: MI = 0x02, MX = 0x01
 HK3: MI = 0x02, MX = 0x02
 ```
+
+HK2 intentionally retains the historic technical key prefix `hk_`, for example
+`hk_betriebsart_vorgabe`, to preserve existing unique IDs, dashboards, and
+automations. The display name still identifies the device as HK2.
 
 Entities include:
 
@@ -303,12 +398,70 @@ The WTC boiler device contains boiler-specific runtime values:
 - VPT volume flow
 - system pressure
 - VPT thermal output
+- remaining time until maintenance
+- maintenance interval
+- burner starts total
+- burner operating hours total
 - previous-day heat quantity:
   - total
   - heating
   - domestic hot water
 
 The flue-gas-temperature and return-temperature registers were empirically confirmed on real hardware.
+
+`VPT thermal output` is probed adaptively during setup. The integration tries
+the confirmed address with `VS=4` first and falls back to `VS=2` for devices
+that return a shorter response. A raw value of `0` remains a valid `0.0 kW`
+state.
+
+The regular WTC boiler device also exposes the empirically confirmed
+`Burner Starts Total` and `Burner Operating Hours Total` counters. Mirrored
+counter addresses exist on tested hardware, but the integration uses only
+`09/01/2920/00` and `09/01/2921/00` for these regular entities until the
+resettable-vs-lifetime distinction is verified further.
+
+The maintenance values are read-only diagnostics. They were empirically
+confirmed on tested hardware but are not used for reset or write operations.
+
+### Weishaupt Systemgeraet Netzwerk
+
+When at least one network value responds, the integration creates a separate
+read-only `Weishaupt Systemgeraet Netzwerk` device attached to the Systemgeraet
+device. The stable device identifier remains `<entry_id>_network`.
+
+Entities include:
+
+- Gerätename, from the optional read-only `06/00/250E/00 VS=16 GETS` string
+  read when supported
+- Zertifikat-CN, from the optional read-only `06/00/2511/00 VS=50 GETS` string
+  read when supported
+- MAC-Adresse, derived from six read-only `06/00/250C/01..06 VS=2` components
+- IP mode
+- IP address
+- subnet mask
+- gateway
+- DNS server
+
+Network values are read immediately during integration setup or reload and are
+kept as cached coordinator data. During normal operation they are synchronized
+at most once every 10 minutes, outside the ordinary heating-system polling
+batch. A temporary network diagnostic read failure keeps the last successful
+value. Network diagnostic entities are enabled by default in the entity
+registry. IP mode raw value `1` is confirmed as `Manuell`; raw value `3` is
+confirmed as `Automatisch (DHCP)`.
+
+The configured device name and certificate CN use optional string-read probes.
+They are created only when the string read returns a non-empty value, and string
+read failure never fails setup. `06/00/2505/00` is a web UI write address and is
+not used by the integration. The MAC address is exposed only when all six
+components are available; the six component registers are not visible entities.
+
+No network write support is implemented. Credentials, passwords, usernames,
+cookies, tokens, and HTTP authorization data are not exposed.
+
+The Home Assistant network device exposes a native configuration link to
+`http://<configured-host>/`. Opening that local Systemgeraet web page remains an
+explicit user action and may show the browser's normal authentication prompt.
 
 ### Solar
 
@@ -348,6 +501,13 @@ The Systemgerät exposes a writable **System Operating Mode** select with the co
 - Summer
 - Automatic
 
+The Systemgeraet also exposes `Systembetriebsart aktuell`, a read-only mirror
+sensor derived from the same confirmed `sg_systembetriebsart` coordinator data.
+It does not add another protocol read.
+
+Redundant read-only HK2/HK3 operating-mode target sensors are removed on reload;
+the writable HK1/HK2/HK3 selects and distinct actual-state sensors remain.
+
 ### Write Validation
 
 Writes are accepted as successful only when the device returns a matching CanApiJson acknowledgement.
@@ -382,6 +542,28 @@ The following registers were confirmed through real read-only API responses on t
 | Previous-day heat quantity: heating | `0x09` | `0x01` | `0x2626` | `0x02` | `4` | × 0.01 kWh |
 | Previous-day heat quantity: hot water | `0x09` | `0x01` | `0x2627` | `0x02` | `4` | × 0.01 kWh |
 | Previous-day heat quantity: total | `0x09` | `0x01` | `0x2628` | `0x02` | `4` | × 0.01 kWh |
+| Burner Starts Total | `0x09` | `0x01` | `0x2920` | `0x00` | `2` | count |
+| Burner Operating Hours Total | `0x09` | `0x01` | `0x2921` | `0x00` | `2` | h |
+
+## Local Metadata Export
+
+For troubleshooting heating-circuit name detection, call:
+
+```text
+weishaupt_wtc_lan.export_local_metadata
+```
+
+The service is read-only with respect to the heating system. It fetches
+`/sd/systable.csv` and writes timestamped files under:
+
+```text
+/config/weishaupt_wtc_lan_diagnostics/local_metadata/
+```
+
+The JSON summary contains parsed heating-circuit names, persisted detected
+names, whether detected-name usage is enabled, and the resolved display names.
+It does not export passwords, authorization headers, tokens, cookies, or HTTP
+credentials.
 
 ## Protocol Reliability Notes
 

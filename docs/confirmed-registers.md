@@ -131,6 +131,37 @@ Observed display names from `/sd/systable.csv` on tested hardware:
 | HK2 | `Fussbodenheizung` |
 | HK3 | `Heizkoerper` |
 
+The integration stores only the parsed detected-name mapping, not the complete
+raw `systable.csv` file. Manual overrides are stored separately. Name resolution
+uses non-empty manual override first, then the last successfully detected
+mapping, then the generic `Heizkreis 1` / `Heizkreis 2` / `Heizkreis 3`
+fallbacks. Display-name changes do not change entity unique IDs, device
+identifiers, or register addresses.
+
+The parser supports explicit HK markers, header/address metadata where
+`MI=0x02` and `MX=0x00`, `0x01`, or `0x02`, and the real local metadata format
+confirmed on the tested installation:
+
+```text
+M02_*.BIN;<display name>;<circuit number>
+```
+
+Only `M02_*.BIN` rows are interpreted as heating-circuit display names, and the
+final column must be circuit number `1`, `2`, or `3`. This prevents the domestic
+hot-water row `M03_*.BIN;Warmwasserspeicher;1` from being misclassified as HK1.
+
+The real metadata also provides optional logical device display names:
+
+| Module file | Logical device |
+|---|---|
+| `M01_*.BIN` | Systemgeraet |
+| `M03_*.BIN` | Warmwasser |
+| `M06_*.BIN` | Netzwerk |
+| `M07_*.BIN` | WTC Kessel |
+
+The historic HK2 technical key prefix `hk_` is intentionally retained for
+backward compatibility with existing unique IDs, dashboards, and automations.
+
 | Key suffix | Description | OX | OS | VS | Scaling / Mapping | Status |
 |---|---|---:|---:|---:|---|---|
 | `betriebsart_vorgabe` | Operating-mode target | `0x2533` | `0x02` | `1` | enum | Confirmed |
@@ -205,8 +236,19 @@ A permanent domestic-hot-water enable/disable register has not yet been confirme
 | `wtc_tageswaermemenge_vortag_heizen` | Previous-day heat quantity: heating | `0x09` | `0x01` | `0x2626` | `0x02` | `4` | × `0.01 kWh` | Confirmed |
 | `wtc_tageswaermemenge_vortag_warmwasser` | Previous-day heat quantity: domestic hot water | `0x09` | `0x01` | `0x2627` | `0x02` | `4` | × `0.01 kWh` | Confirmed |
 | `wtc_tageswaermemenge_vortag_gesamt` | Previous-day heat quantity: total | `0x09` | `0x01` | `0x2628` | `0x02` | `4` | × `0.01 kWh` | Confirmed |
+| `wtc_zeit_bis_wartung` | Remaining time until maintenance | `0x09` | `0x01` | `0x2641` | `0x00` | `2` | `h` | Empirically confirmed |
+| `wtc_wartungsintervall` | Maintenance interval | `0x09` | `0x01` | `0x2642` | `0x00` | `2` | `h` | Empirically confirmed |
 | `wtc_brennerstarts_gesamt` | Burner starts total | `0x09` | `0x01` | `0x2920` | `0x00` | `2` | count | Empirically confirmed |
 | `wtc_betriebsstunden_gesamt` | Burner operating hours total | `0x09` | `0x01` | `0x2921` | `0x00` | `2` | `h` | Empirically confirmed |
+
+`wtc_waermeleistung_vpt` is probed with `VS=4` first and `VS=2` as a fallback.
+Both sizes use the same confirmed address and preserve raw `0` as valid
+`0.0 kW`.
+
+The maintenance values were correlated against a real installation display
+showing roughly `4997 h` remaining and a `5000 h` interval. They are read-only
+diagnostics only; the integration does not expose reset or write operations for
+maintenance.
 
 ### Confirmed Real WTC Responses
 
@@ -261,21 +303,166 @@ OS = 0x00
 VS = 2
 ```
 
+## Optional Experimental WTC Diagnostics
+
+When the integration option `Enable experimental read-only WTC sensors` is
+enabled, setup probes the following curated WTC candidates. Candidates that
+return `CMD_RESPONSE` are exposed on the separate `WTC Experimental Diagnostics`
+device. Candidates that return `CMD_ERROR` are skipped.
+
+These values are intentionally raw diagnostics for correlation testing. They do
+not have confirmed meanings, units, device classes, state classes, or write
+support.
+
+| Address | VS | Notes |
+|---|---:|---|
+| `09/01/2610/02` | `2` | Candidate temperature-related WTC value, probable scale `0.1 C` |
+| `09/01/2611/02` | `2` | Candidate temperature-related WTC value, probable scale `0.1 C` |
+| `09/01/2612/02` | `2` | Candidate temperature-related WTC value, probable scale `0.1 C` |
+| `09/01/2615/02` | `2` | Probable VPT flow temperature, probable scale `0.1 C` |
+| `09/01/2619/02` | `1` | Probable internal pump modulation, probable unit `%` |
+| `09/01/263A/02` | `2` | Curated experimental candidate |
+| `09/01/2679/00` | `2` | Curated experimental candidate |
+| `09/01/268A/00` | `4` | Curated experimental candidate |
+| `09/01/268B/00` | `4` | Curated experimental candidate |
+| `09/01/268C/00` | `4` | Curated experimental candidate |
+| `09/01/268D/00` | `2` | Curated experimental candidate |
+| `09/01/268E/00` | `2` | Curated experimental candidate |
+| `09/01/268F/00` | `2` | Curated experimental candidate |
+| `09/01/2902/00` | `2` | Curated experimental candidate |
+| `09/01/2903/00` | `2` | Curated experimental candidate |
+| `09/01/2904/00` | `1` | Curated experimental candidate |
+| `09/01/2905/00` | `1` | Curated experimental candidate |
+| `09/01/2908/00` | `2` | Curated experimental candidate |
+| `09/01/2922/00` | `1` | Curated experimental candidate |
+
+Experimental entities keep the primary state as the raw signed integer. Hints,
+confidence, probable unit, and probable scale are exposed only as attributes
+until the register meaning is confirmed.
+
+Raw experimental `0` or `1` values are not automatically classified as binary
+states. Confirmed binary/state-like values can keep explicit mappings such as
+`Ein` / `Aus`, but unconfirmed candidates remain raw diagnostics.
+
+### Extended Experimental Catalog
+
+The option `Enable extended experimental read-only WTC sensors` adds
+infrastructure for a capped second catalog under the same `WTC Experimental
+Diagnostics` device. The catalog is disabled by default, is only evaluated when
+curated experimental sensors are enabled, and is capped at 100 explicitly listed
+addresses.
+
+Current catalog: empty.
+
+Reason: the committed discovery artifacts contain broad scan outputs and
+candidate hits, but not a reviewed semantic list that safely excludes mirrors,
+static tables, network values, already confirmed regular sensors, and existing
+curated experimental entries. A curated correlation artifact with address,
+observed values over time, suspected meaning, and exclusion rationale is needed
+before populating this list.
+
 ## Network Diagnostic Registers
 
 These values were confirmed through the local web-interface JavaScript and read-only requests.
 
 | Description | MI | MX | OX | OS | VS | Scaling / Mapping |
 |---|---:|---:|---:|---:|---:|---|
-| IP mode | `0x06` | `0x00` | `0x2507` | `0x00` | `1` | enum |
+| IP mode | `0x06` | `0x00` | `0x2507` | `0x00` | `1` | `1` = Manuell, `3` = Automatisch (DHCP) |
 | IP address | `0x06` | `0x00` | `0x2508` | `0x00` | `4` | IPv4 |
 | Subnet mask | `0x06` | `0x00` | `0x2509` | `0x00` | `4` | IPv4 |
 | Gateway | `0x06` | `0x00` | `0x250A` | `0x00` | `4` | IPv4 |
 | DNS server | `0x06` | `0x00` | `0x250B` | `0x00` | `4` | IPv4 |
+| MAC component 1 | `0x06` | `0x00` | `0x250C` | `0x01` | `2` | derived MAC byte |
+| MAC component 2 | `0x06` | `0x00` | `0x250C` | `0x02` | `2` | derived MAC byte |
+| MAC component 3 | `0x06` | `0x00` | `0x250C` | `0x03` | `2` | derived MAC byte |
+| MAC component 4 | `0x06` | `0x00` | `0x250C` | `0x04` | `2` | derived MAC byte |
+| MAC component 5 | `0x06` | `0x00` | `0x250C` | `0x05` | `2` | derived MAC byte |
+| MAC component 6 | `0x06` | `0x00` | `0x250C` | `0x06` | `2` | derived MAC byte |
+| Gerätename / NBNS | `0x06` | `0x00` | `0x250E` | `0x00` | `16` | string GETS |
+| Zertifikat-CN | `0x06` | `0x00` | `0x2511` | `0x00` | `50` | string GETS |
 
-## Experimental Candidates
+The configured network device name is probed with the protocol string-read
+command at `06/00/250E/00 VS=16 GETS` and exposed as `Gerätename` only when the
+device returns a non-empty supported string response. `06/00/2505/00` is a web
+UI write address and is not used.
 
-The following values are intentionally not exposed as Home Assistant entities yet.
+`Zertifikat-CN` is probed with `06/00/2511/00 VS=50 GETS` and is also skipped
+safely when unsupported or empty.
+
+The six MAC components are probed during setup/reload and during the throttled
+network-diagnostics synchronization. The integration exposes one derived
+`MAC-Adresse` diagnostic in `XX-XX-XX-XX-XX-XX` format and does not create
+visible component entities. If any component is missing or invalid during the
+initial read, the derived MAC entity is skipped safely. If a later refresh fails,
+the last successful MAC value is retained.
+
+Network diagnostics are read immediately on setup or reload, then synchronized
+at most once every 10 minutes outside the ordinary heating-system polling batch.
+Successful values are merged into cached coordinator data; missing optional
+values do not remove previous visible states. No network write support,
+password-related registers, usernames, cookies, Authorization headers, or tokens
+are exposed.
+
+The logical network device keeps the stable `<entry_id>_network` identifier and
+the display name `Weishaupt Systemgeraet Netzwerk`. Its Home Assistant device
+info includes the local configuration URL `http://<configured-host>/` without
+credentials.
+
+## Derived Device Date and Time
+
+The integration derives separate diagnostic date and clock-time sensors from
+the existing raw Systemgeraet components:
+
+| Derived key | Source components | Format |
+|---|---|---|
+| `sg_device_date` | `sg_datum_tag`, `sg_datum_monat`, `sg_datum_jahr` | `DD.MM.YYYY` |
+| `sg_device_clock_time` | `sg_uhrzeit_stunden`, `sg_uhrzeit_minuten` | `HH:MM` |
+
+Validated date field order on tested hardware:
+
+| Raw component key | Address | Meaning |
+|---|---|---|
+| `sg_datum_jahr` | `01/00/2563/02` | year offset, for example `26` -> `2026` |
+| `sg_datum_monat` | `01/00/2563/03` | month |
+| `sg_datum_tag` | `01/00/2563/04` | day |
+
+No extra protocol reads are added for these derived sensors. `sg_device_date`
+and `sg_device_clock_time` are enabled by default. The raw component entities
+and the backward-compatible combined timestamp remain available as diagnostic
+entities and are disabled by default.
+
+## System Operating-Mode Mirror
+
+`sg_systembetriebsart_aktuell` is a read-only mirror of the confirmed
+`sg_systembetriebsart` coordinator data. It exposes the same decoded mapping and
+does not add another protocol read.
+
+## Snapshot Export Workflow
+
+The service `weishaupt_wtc_lan.export_experimental_snapshot` writes one JSON
+and one CSV file under `/config/weishaupt_wtc_lan_diagnostics/`.
+
+Snapshots include timestamp, integration version, host identifier without
+credentials, regular WTC values, network diagnostics when available, curated
+experimental values, and extended experimental values when enabled. They do not
+export passwords, authorization headers, HTTP Basic credentials, tokens, or
+cookies.
+
+## Local Metadata Export Workflow
+
+The service `weishaupt_wtc_lan.export_local_metadata` writes timestamped
+read-only local metadata under
+`/config/weishaupt_wtc_lan_diagnostics/local_metadata/`.
+
+The export includes `/sd/systable.csv` when it can be fetched and a JSON summary
+with parsed names, persisted detected names, whether detected-name usage is
+enabled, and resolved display names. It excludes passwords, authorization
+headers, tokens, cookies, and HTTP credentials.
+
+## Broad Experimental Candidates
+
+The following broad discovery topics are intentionally not exposed as regular
+Home Assistant entities.
 
 Their meaning, scaling, stability, or mirrored-register behavior still requires targeted correlation testing.
 

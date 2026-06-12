@@ -1,0 +1,21 @@
+export_experimental_snapshot:
+  name: Export experimental snapshot
+  description: Export a read-only diagnostics snapshot as JSON and CSV under /config/weishaupt_wtc_lan_diagnostics.
+  fields:
+    entry_id:
+      name: Config entry ID
+      description: Optional config entry ID. When omitted, the first loaded Weishaupt WTC LAN entry is used.
+      required: false
+      selector:
+        text:
+
+export_local_metadata:
+  name: Export local metadata
+  description: Export read-only local metadata used for heating-circuit name detection under /config/weishaupt_wtc_lan_diagnostics/local_metadata.
+  fields:
+    entry_id:
+      name: Config entry ID
+      description: Optional config entry ID. When omitted, the first loaded Weishaupt WTC LAN entry is used.
+      required: false
+      selector:
+        text:

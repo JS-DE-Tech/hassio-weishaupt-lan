@@ -2,8 +2,8 @@
     "config": {
         "step": {
             "user": {
-                "title": "Weishaupt WTC Einrichtung",
-                "description": "Verbindung zum Weishaupt Systemgerät (SG) über die CanApiJson-Schnittstelle herstellen.",
+                "title": "Weishaupt WTC LAN",
+                "description": "Stellt eine direkte lokale LAN-Verbindung zum Weishaupt Systemgerät (SG) her und liest die Heizungsdaten über die CanApiJson-JSON-Schnittstelle aus. Keine Cloud erforderlich.",
                 "data": {
                     "host": "Host / IP-Adresse",
                     "username": "Benutzername",
@@ -11,7 +11,8 @@
                     "scan_interval": "Abfrageintervall",
                     "hk1_name": "Name Heizkreis 1",
                     "hk2_name": "Name Heizkreis 2",
-                    "hk3_name": "Name Heizkreis 3"
+                    "hk3_name": "Name Heizkreis 3",
+                    "enable_experimental_wtc_sensors": "Experimentelle schreibgeschuetzte WTC-Sensoren aktivieren"
                 }
             }
         },
@@ -27,13 +28,14 @@
     "options": {
         "step": {
             "init": {
-                "title": "Weishaupt WTC Optionen",
+                "title": "Weishaupt WTC LAN",
                 "description": "Abfrageintervall (10-600 Sekunden) und Anzeigenamen der Heizkreise anpassen.",
                 "data": {
                     "scan_interval": "Abfrageintervall",
                     "hk1_name": "Name Heizkreis 1",
                     "hk2_name": "Name Heizkreis 2",
-                    "hk3_name": "Name Heizkreis 3"
+                    "hk3_name": "Name Heizkreis 3",
+                    "enable_experimental_wtc_sensors": "Experimentelle schreibgeschuetzte WTC-Sensoren aktivieren"
                 }
             }
         }

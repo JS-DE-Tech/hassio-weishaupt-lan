@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -12,9 +13,11 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import WeishauptApiClient, WeishauptApiError, WeishauptConnectionError
 from .const import DOMAIN
 from .heating_circuits import build_polled_sensor_definitions
-from .sensors import WeishauptSensorDefinition
+from .sensors import ExperimentalWtcRegister, WeishauptSensorDefinition
 
 _LOGGER = logging.getLogger(__name__)
+
+NETWORK_REFRESH_INTERVAL = timedelta(minutes=10)
 
 DEBUG_STATE_KEYS = {
     "sg_betriebsart_hk1_vorgabe",
@@ -47,7 +50,12 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         sensor_definitions: list[WeishauptSensorDefinition] | None = None,
         active_heating_circuits: list[int] | None = None,
         heating_circuit_names: dict[int, str] | None = None,
+        logical_device_names: dict[str, str] | None = None,
         active_device_groups: set[str] | None = None,
+        experimental_wtc_registers: list[ExperimentalWtcRegister] | None = None,
+        extended_experimental_wtc_registers: list[ExperimentalWtcRegister] | None = None,
+        static_data: dict[str, Any] | None = None,
+        network_refresh_callback: Callable[[], Awaitable[dict[str, Any]]] | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -63,10 +71,56 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.active_heating_circuits = active_heating_circuits or [1]
         self.heating_circuit_names = heating_circuit_names or {}
+        self.logical_device_names = logical_device_names or {}
         self.active_device_groups = active_device_groups or set()
+        self.experimental_wtc_registers = experimental_wtc_registers or []
+        self.extended_experimental_wtc_registers = (
+            extended_experimental_wtc_registers or []
+        )
+        self.static_data = static_data or {}
+        self.network_refresh_callback = network_refresh_callback
+        self._last_network_refresh = (
+            datetime.now(timezone.utc) if network_refresh_callback is not None else None
+        )
+
+    async def async_refresh_network_diagnostics(
+        self,
+        *,
+        force: bool = False,
+        now: datetime | None = None,
+    ) -> bool:
+        """Refresh cached network diagnostics when due."""
+        if self.network_refresh_callback is None:
+            return False
+        now = now or datetime.now(timezone.utc)
+        if (
+            not force
+            and self._last_network_refresh is not None
+            and now - self._last_network_refresh < NETWORK_REFRESH_INTERVAL
+        ):
+            return False
+
+        try:
+            network_data = await self.network_refresh_callback()
+        except Exception:  # noqa: BLE001 - keep heating refresh stable on optional diagnostics failure.
+            _LOGGER.debug("Network diagnostics refresh failed", exc_info=True)
+            self._last_network_refresh = now
+            return False
+
+        if network_data:
+            self.static_data.update(network_data)
+            _LOGGER.debug(
+                "Updated cached network diagnostics: keys=%s",
+                sorted(network_data),
+            )
+        else:
+            _LOGGER.debug("Network diagnostics refresh returned no values")
+        self._last_network_refresh = now
+        return bool(network_data)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the Weishaupt device."""
+        await self.async_refresh_network_diagnostics()
         params = []
         for sensor_def in self.polled_sensor_definitions:
             params.append(
@@ -77,6 +131,28 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "ox": sensor_def.ox,
                     "os": sensor_def.os,
                     "vs": sensor_def.vs,
+                }
+            )
+        for register in self.experimental_wtc_registers:
+            params.append(
+                {
+                    "key": register.key,
+                    "mi": register.mi,
+                    "mx": register.mx,
+                    "ox": register.ox,
+                    "os": register.os,
+                    "vs": register.vs,
+                }
+            )
+        for register in self.extended_experimental_wtc_registers:
+            params.append(
+                {
+                    "key": register.key,
+                    "mi": register.mi,
+                    "mx": register.mx,
+                    "ox": register.ox,
+                    "os": register.os,
+                    "vs": register.vs,
                 }
             )
 
@@ -119,4 +195,4 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 data.get("value_int"),
             )
 
-        return results
+        return {**self.static_data, **results}

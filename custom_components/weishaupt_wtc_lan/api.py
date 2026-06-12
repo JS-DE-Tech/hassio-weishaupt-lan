@@ -13,7 +13,9 @@ from .const import (
     CMD_ACK,
     CMD_ERROR,
     CMD_GET,
+    CMD_GET_STRING,
     CMD_RESPONSE,
+    CMD_RESPONSE_STRING,
     CMD_SET,
     SRC_DDC,
 )
@@ -63,6 +65,12 @@ def build_read_vg(mi: int, mx: int, ox: int, os_val: int, vs: int) -> str:
     return f"{CMD_GET:02x}{mi:02x}{mx:02x}{ox:04x}{os_val:02x}{vs:04x}{padding}"
 
 
+def build_read_string_vg(mi: int, mx: int, ox: int, os_val: int, vs: int = 64) -> str:
+    """Build a VG string read request frame."""
+    padding = "00" * vs
+    return f"{CMD_GET_STRING:02x}{mi:02x}{mx:02x}{ox:04x}{os_val:02x}{vs:04x}{padding}"
+
+
 def build_write_vg(
     mi: int, mx: int, ox: int, os_val: int, vs: int, value_hex: str
 ) -> str:
@@ -99,6 +107,19 @@ def parse_vg_response(vg: str) -> dict[str, Any]:
         "value_hex": value_hex,
         "value_int": value_int,
     }
+
+
+def parse_string_vg_response(vg: str) -> dict[str, Any]:
+    """Parse a VG string response frame and decode the NUL-terminated payload."""
+    parsed = parse_vg_response(vg)
+    value_hex = parsed.get("value_hex", "")
+    try:
+        value_bytes = bytes.fromhex(value_hex)
+    except ValueError as err:
+        raise WeishauptApiError(f"Invalid string VG payload: {vg}") from err
+    value_bytes = value_bytes.split(b"\x00", 1)[0]
+    parsed["value_string"] = value_bytes.decode("utf-8", errors="replace").strip()
+    return parsed
 
 
 def _param_address(param: dict[str, Any]) -> tuple[int, int, int, int, int]:
@@ -375,6 +396,52 @@ class WeishauptApiClient:
                     )
 
         return results
+
+    async def read_string_parameter(
+        self,
+        mi: int,
+        mx: int,
+        ox: int,
+        os_val: int,
+        vs: int = 64,
+    ) -> dict[str, Any] | None:
+        """Read one string parameter if the device supports string GET."""
+        vg = build_read_string_vg(mi=mi, mx=mx, ox=ox, os_val=os_val, vs=vs)
+        payload = {
+            "ID": REQUEST_ID,
+            "SRC": SRC_DDC,
+            "CAPI": {"NN": 1, "N01": {"VG": vg}},
+        }
+
+        try:
+            response = await self._post(payload)
+        except WeishauptApiError as err:
+            _LOGGER.debug("String read failed: %s", err)
+            return None
+
+        if not response or "CAPI" not in response:
+            return None
+        vg_str = response["CAPI"].get("N01", {}).get("VG", "")
+        if not vg_str:
+            return None
+
+        try:
+            parsed = parse_string_vg_response(vg_str)
+        except (ValueError, WeishauptApiError) as err:
+            _LOGGER.debug("Failed to parse string VG response: %s", err)
+            return None
+
+        if parsed["cmd"] != CMD_RESPONSE_STRING:
+            return None
+        expected = (mi, mx, ox, os_val, vs)
+        if _parsed_address(parsed) != expected:
+            _LOGGER.debug(
+                "String read response address mismatch: expected=%s got=%s",
+                expected,
+                _parsed_address(parsed),
+            )
+            return None
+        return parsed
 
     async def has_heating_circuit(self, mx: int) -> bool:
         """Return True when an external heating circuit answers a probe read.

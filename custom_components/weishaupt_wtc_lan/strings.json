@@ -2,13 +2,22 @@
     "config": {
         "step": {
             "user": {
-                "title": "Weishaupt WTC LAN Setup",
-                "description": "Connect to your Weishaupt system device (SG) via the CanApiJson interface.",
+                "title": "Weishaupt WTC LAN",
+                "description": "Connects directly to the Weishaupt system device (SG) over the local LAN and reads heating data through the CanApiJson JSON interface. No cloud required.",
                 "data": {
                     "host": "Host / IP address",
                     "username": "Username",
                     "password": "Password",
                     "scan_interval": "Scan interval",
+                    "enable_experimental_wtc_sensors": "Enable experimental read-only WTC sensors",
+                    "enable_extended_experimental_wtc_sensors": "Enable extended experimental read-only WTC sensors"
+                }
+            },
+            "names": {
+                "title": "Heating Circuit Names",
+                "description": "Review detected heating-circuit display names and adjust them if needed.",
+                "data": {
+                    "use_detected_heating_circuit_names": "Use detected heating-circuit names",
                     "hk1_name": "Name heating circuit 1",
                     "hk2_name": "Name heating circuit 2",
                     "hk3_name": "Name heating circuit 3"
@@ -27,13 +36,16 @@
     "options": {
         "step": {
             "init": {
-                "title": "Weishaupt WTC LAN Options",
+                "title": "Weishaupt WTC LAN",
                 "description": "Adjust polling (10-600 seconds) and heating circuit display names.",
                 "data": {
                     "scan_interval": "Scan interval",
                     "hk1_name": "Name heating circuit 1",
                     "hk2_name": "Name heating circuit 2",
-                    "hk3_name": "Name heating circuit 3"
+                    "hk3_name": "Name heating circuit 3",
+                    "use_detected_heating_circuit_names": "Use detected heating-circuit names",
+                    "enable_experimental_wtc_sensors": "Enable experimental read-only WTC sensors",
+                    "enable_extended_experimental_wtc_sensors": "Enable extended experimental read-only WTC sensors"
                 }
             }
         }
