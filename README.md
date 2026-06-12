@@ -188,11 +188,40 @@ custom domain `weishaupt_wtc_lan`.
 5. Optionally adjust the username, password, polling interval, and experimental diagnostics toggles.
 6. Review the detected heating-circuit display names and edit them if needed.
 
-The polling interval can be configured from **10 to 600 seconds** in steps of **10 seconds**.
+The polling interval can be configured from **30 to 600 seconds** in steps of **10 seconds**.
+
+Recommended polling intervals:
+
+- Normal operation without experimental sensors: **30 seconds**
+- Curated experimental sensors enabled: **60 seconds or slower**
+- Extended experimental diagnostics enabled: **120 seconds or slower**
 
 The same options can be changed later from the integration options. Saving the options reloads the integration so the new polling interval, display names, and diagnostic options take effect without removing the integration.
 
 Heating-circuit names are display names only. Entity unique IDs, device identifiers, and CanApiJson register addresses remain stable when names are changed.
+
+## Request Safety and Write Settling
+
+All CanApiJson HTTP requests are serialized through one shared client lock. The
+integration keeps a conservative minimum gap of **300 ms** between completed
+requests and the next request start. Regular read batches remain capped at six
+VG frames.
+
+Writable select, number, and one-shot button entities are queued centrally in
+the coordinator. Rapid changes are debounced for **750 ms**; repeated writes to
+the same register keep only the newest pending value, while writes to different
+registers are still sent one at a time in order.
+
+After the final queued write is acknowledged, the integration waits for a
+**10-second** quiet period and then requests one coordinator refresh. During
+queued writes and the post-write settling window, ordinary full polling reads
+are skipped and Home Assistant keeps showing the last-good coordinator data.
+Acknowledged configured target values are reflected optimistically, but actual
+state mirrors are not fabricated until a real device poll confirms them.
+
+If a later dynamic read batch times out or returns no data, previously valid
+dynamic values are preserved. This avoids unrelated entities becoming
+unavailable because one batch failed temporarily.
 
 ## Optional Experimental WTC Diagnostics
 

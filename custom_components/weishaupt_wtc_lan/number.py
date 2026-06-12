@@ -145,19 +145,7 @@ class WeishauptNumberEntity(CoordinatorEntity, NumberEntity):
         raw_value = int(round(value * 10))
 
         try:
-            success = await self.coordinator.client.write_parameter(
-                mi=self._sensor_def.mi,
-                mx=self._sensor_def.mx,
-                ox=self._sensor_def.ox,
-                os_val=self._sensor_def.os,
-                vs=self._sensor_def.vs,
-                value_int=raw_value,
-            )
+            await self.coordinator.async_enqueue_write(self._sensor_def, raw_value)
         except Exception as err:
             _LOGGER.error("Failed to write %s=%s: %s", self._sensor_def.key, value, err)
             return
-
-        if success:
-            await self.coordinator.async_request_refresh()
-        else:
-            _LOGGER.debug("Write reported unsuccessful for %s", self._sensor_def.key)

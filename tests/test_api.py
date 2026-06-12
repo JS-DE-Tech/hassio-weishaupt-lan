@@ -7,6 +7,9 @@ from pathlib import Path
 import sys
 import types
 import unittest
+import asyncio
+
+REAL_ASYNCIO_SLEEP = asyncio.sleep
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +90,52 @@ class SequenceResponseClient(api.WeishauptApiClient):
         return self.responses.pop(0)
 
 
+class FakeJsonResponse:
+    """Minimal aiohttp response object."""
+
+    status = 200
+
+    async def json(self, content_type=None):
+        """Return a valid CanApiJson response."""
+        return {"CAPI": {"NN": 0}}
+
+
+class FakePostContext:
+    """Async context manager recording concurrent request attempts."""
+
+    def __init__(self, session) -> None:
+        self.session = session
+
+    async def __aenter__(self):
+        self.session.active_requests += 1
+        self.session.max_active_requests = max(
+            self.session.max_active_requests,
+            self.session.active_requests,
+        )
+        await REAL_ASYNCIO_SLEEP(0.01)
+        return FakeJsonResponse()
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.session.active_requests -= 1
+        return False
+
+
+class FakeSession:
+    """Minimal aiohttp session recording post calls."""
+
+    closed = False
+
+    def __init__(self) -> None:
+        self.active_requests = 0
+        self.max_active_requests = 0
+        self.posts = 0
+
+    def post(self, *args, **kwargs):
+        """Return a fake post context."""
+        self.posts += 1
+        return FakePostContext(self)
+
+
 def capi_batch_response(vgs: list[str | None]) -> dict:
     """Build a CanApiJson batch response."""
     capi = {"NN": len(vgs)}
@@ -123,6 +172,44 @@ def params(count: int) -> list[dict[str, int | str]]:
 
 class ApiClientTests(unittest.IsolatedAsyncioTestCase):
     """Test CanApiJson read behavior."""
+
+    async def test_post_calls_are_serialized(self) -> None:
+        """Concurrent _post calls should run one HTTP request at a time."""
+        session = FakeSession()
+        client = api.WeishauptApiClient("wem-sg", "admin", "Admin123", session=session)
+        original_gap = api.MIN_REQUEST_GAP_SECONDS
+        api.MIN_REQUEST_GAP_SECONDS = 0
+        try:
+            await asyncio.gather(client._post({"one": 1}), client._post({"two": 2}))
+        finally:
+            api.MIN_REQUEST_GAP_SECONDS = original_gap
+
+        self.assertEqual(session.posts, 2)
+        self.assertEqual(session.max_active_requests, 1)
+
+    async def test_post_respects_minimum_request_gap(self) -> None:
+        """A request should wait for the remaining configured inter-request gap."""
+        session = FakeSession()
+        client = api.WeishauptApiClient("wem-sg", "admin", "Admin123", session=session)
+        original_gap = api.MIN_REQUEST_GAP_SECONDS
+        api.MIN_REQUEST_GAP_SECONDS = 0.02
+        client._last_request_completed = api.time.monotonic() - 0.005
+        sleeps: list[float] = []
+        original_sleep = api.asyncio.sleep
+
+        async def fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        api.asyncio.sleep = fake_sleep
+        try:
+            await client._post({"ID": "12345678"})
+        finally:
+            api.asyncio.sleep = original_sleep
+            api.MIN_REQUEST_GAP_SECONDS = original_gap
+
+        self.assertEqual(len(sleeps), 1)
+        self.assertGreater(sleeps[0], 0)
+        self.assertLessEqual(sleeps[0], 0.02)
 
     async def test_read_parameters_splits_batches_at_six_dense_frames(self) -> None:
         """Read batches should contain no more than six densely numbered frames."""
@@ -230,6 +317,27 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
         result = await client.read_string_parameter(0x06, 0x00, 0x250E, 0x00, 16)
 
         self.assertIsNone(result)
+
+    async def test_write_parameter_rejects_ack_address_mismatch(self) -> None:
+        """Write ACK validation should reject mismatched register addresses."""
+        client = SequenceResponseClient(
+            [
+                capi_batch_response(
+                    [vg_with_value(api.CMD_ACK, 0x02, 0x00, 0x2534, 0x02, 1, 3)]
+                )
+            ]
+        )
+
+        success = await client.write_parameter(
+            mi=0x02,
+            mx=0x00,
+            ox=0x2533,
+            os_val=0x02,
+            vs=1,
+            value_int=3,
+        )
+
+        self.assertFalse(success)
 
 
 if __name__ == "__main__":

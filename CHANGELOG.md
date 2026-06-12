@@ -20,14 +20,20 @@
 - Added `weishaupt_wtc_lan.export_experimental_snapshot` service to export JSON and CSV correlation snapshots.
 
 ### Changed
+- Serialized all CanApiJson HTTP requests through one shared client lock with a 300 ms minimum inter-request gap.
+- Raised the configurable polling interval range to 30-600 seconds in 10-second steps.
 - Kept CanApiJson read batches limited to six frames for improved reliability.
 - Kept experimental polling disabled by default.
 - Probed `wtc_waermeleistung_vpt` adaptively with `VS=4` first and `VS=2` fallback for devices that use a shorter response.
 - Added confidence, probable-unit and probable-scale metadata for selected experimental WTC candidates.
 - Network diagnostics are read immediately during setup/reload, refreshed at most once every 10 minutes, and kept as last-good cached coordinator data.
+- Queued writable entity updates centrally, coalesced rapid same-register changes, and delayed one coordinator refresh until after a 10-second post-write settling period.
+- Documented polling recommendations: 30 seconds for normal operation, 60 seconds or slower with curated experimental sensors, and 120 seconds or slower with extended experimental diagnostics.
 - Retained the historic HK2 technical key prefix `hk_` for backward compatibility.
 
 ### Fixed
+- Preserved last-good dynamic values when a later read batch fails, so unrelated entities do not become unavailable because one batch timed out.
+- Reflected strictly acknowledged configured target values optimistically without fabricating actual-state mirrors.
 - Preserved valid raw zero values in regular and experimental read paths.
 - Ensured that a failing experimental register does not discard valid values from the same batch.
 - Preserved `0.0 kW` as a valid WTC VPT thermal-output value.

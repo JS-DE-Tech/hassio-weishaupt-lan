@@ -137,22 +137,9 @@ class WeishauptSelectEntity(CoordinatorEntity, SelectEntity):
         raw_value = inv_map[option]
 
         try:
-            success = await self.coordinator.client.write_parameter(
-                mi=self._sensor_def.mi,
-                mx=self._sensor_def.mx,
-                ox=self._sensor_def.ox,
-                os_val=self._sensor_def.os,
-                vs=self._sensor_def.vs,
-                value_int=raw_value,
-            )
-        except Exception as err:  # catch client errors
+            await self.coordinator.async_enqueue_write(self._sensor_def, raw_value)
+        except Exception as err:  # catch queueing errors
             _LOGGER.error(
                 "Failed to write %s=%s: %s", self._sensor_def.key, option, err
             )
             return
-
-        if success:
-            # Refresh coordinator data to reflect the new state
-            await self.coordinator.async_request_refresh()
-        else:
-            _LOGGER.debug("Write reported unsuccessful for %s", self._sensor_def.key)

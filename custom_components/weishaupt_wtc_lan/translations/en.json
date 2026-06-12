@@ -37,7 +37,7 @@
         "step": {
             "init": {
                 "title": "Weishaupt WTC LAN",
-                "description": "Adjust polling (10-600 seconds) and heating circuit display names.",
+                "description": "Adjust polling (30-600 seconds) and heating circuit display names.",
                 "data": {
                     "scan_interval": "Scan interval",
                     "hk1_name": "Name heating circuit 1",

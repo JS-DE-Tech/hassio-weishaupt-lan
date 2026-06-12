@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import aiohttp
@@ -24,6 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 
 REQUEST_ID = "12345678"
 MAX_PARAMS_PER_REQUEST = 6
+MIN_REQUEST_GAP_SECONDS = 0.3
 SYSTABLE_PATH = "/sd/systable.csv"
 
 
@@ -172,6 +174,18 @@ class WeishauptApiClient:
         self._session = session
         self._own_session = session is None
         self._base_url = f"http://{host}{API_ENDPOINT}"
+        self._request_lock = asyncio.Lock()
+        self._last_request_completed: float | None = None
+        self.last_read_failed_batches = 0
+
+    async def _wait_for_request_slot_locked(self) -> None:
+        """Respect the minimum inter-request gap while holding the request lock."""
+        if self._last_request_completed is None:
+            return
+        elapsed = time.monotonic() - self._last_request_completed
+        remaining = MIN_REQUEST_GAP_SECONDS - elapsed
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         """Ensure we have an active session."""
@@ -188,72 +202,80 @@ class WeishauptApiClient:
 
     async def _post(self, payload: dict) -> dict:
         """Post a JSON payload to the Weishaupt device."""
-        session = await self._ensure_session()
-        headers = {
-            "Connection": "keep-alive",
-            "Referer": f"http://{self._host}/",
-            "Content-Type": "application/json",
-        }
+        async with self._request_lock:
+            await self._wait_for_request_slot_locked()
+            session = await self._ensure_session()
+            headers = {
+                "Connection": "keep-alive",
+                "Referer": f"http://{self._host}/",
+                "Content-Type": "application/json",
+            }
 
-        try:
-            async with session.post(
-                self._base_url,
-                json=payload,
-                headers=headers,
-                auth=aiohttp.BasicAuth(self._username, self._password),
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as response:
-                if response.status == 401:
-                    raise WeishauptAuthError(
-                        "Authentication failed. Check username/password."
-                    )
-                if response.status != 200:
-                    raise WeishauptApiError(
-                        f"Unexpected HTTP status: {response.status}"
-                    )
-                return await response.json(content_type=None)
-        except aiohttp.ClientConnectorError as err:
-            raise WeishauptConnectionError(
-                f"Cannot connect to Weishaupt device at {self._host}: {err}"
-            ) from err
-        except asyncio.TimeoutError as err:
-            raise WeishauptConnectionError(
-                f"Timeout connecting to Weishaupt device at {self._host}"
-            ) from err
+            try:
+                async with session.post(
+                    self._base_url,
+                    json=payload,
+                    headers=headers,
+                    auth=aiohttp.BasicAuth(self._username, self._password),
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as response:
+                    if response.status == 401:
+                        raise WeishauptAuthError(
+                            "Authentication failed. Check username/password."
+                        )
+                    if response.status != 200:
+                        raise WeishauptApiError(
+                            f"Unexpected HTTP status: {response.status}"
+                        )
+                    return await response.json(content_type=None)
+            except aiohttp.ClientConnectorError as err:
+                raise WeishauptConnectionError(
+                    f"Cannot connect to Weishaupt device at {self._host}: {err}"
+                ) from err
+            except asyncio.TimeoutError as err:
+                raise WeishauptConnectionError(
+                    f"Timeout connecting to Weishaupt device at {self._host}"
+                ) from err
+            finally:
+                self._last_request_completed = time.monotonic()
 
     async def fetch_systable_csv(self) -> str | None:
         """Fetch the read-only device system table if the web UI exposes it."""
-        session = await self._ensure_session()
-        url = f"http://{self._host}{SYSTABLE_PATH}"
-        headers = {
-            "Connection": "keep-alive",
-            "Referer": f"http://{self._host}/",
-        }
+        async with self._request_lock:
+            await self._wait_for_request_slot_locked()
+            session = await self._ensure_session()
+            url = f"http://{self._host}{SYSTABLE_PATH}"
+            headers = {
+                "Connection": "keep-alive",
+                "Referer": f"http://{self._host}/",
+            }
 
-        try:
-            async with session.get(
-                url,
-                headers=headers,
-                auth=aiohttp.BasicAuth(self._username, self._password),
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as response:
-                if response.status == 401:
-                    raise WeishauptAuthError(
-                        "Authentication failed. Check username/password."
-                    )
-                if response.status != 200:
-                    _LOGGER.debug(
-                        "systable.csv unavailable from device: HTTP %s",
-                        response.status,
-                    )
-                    return None
-                return await response.text(errors="replace")
-        except aiohttp.ClientConnectorError as err:
-            _LOGGER.debug("Cannot fetch systable.csv from %s: %s", self._host, err)
-            return None
-        except asyncio.TimeoutError:
-            _LOGGER.debug("Timeout fetching systable.csv from %s", self._host)
-            return None
+            try:
+                async with session.get(
+                    url,
+                    headers=headers,
+                    auth=aiohttp.BasicAuth(self._username, self._password),
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as response:
+                    if response.status == 401:
+                        raise WeishauptAuthError(
+                            "Authentication failed. Check username/password."
+                        )
+                    if response.status != 200:
+                        _LOGGER.debug(
+                            "systable.csv unavailable from device: HTTP %s",
+                            response.status,
+                        )
+                        return None
+                    return await response.text(errors="replace")
+            except aiohttp.ClientConnectorError as err:
+                _LOGGER.debug("Cannot fetch systable.csv from %s: %s", self._host, err)
+                return None
+            except asyncio.TimeoutError:
+                _LOGGER.debug("Timeout fetching systable.csv from %s", self._host)
+                return None
+            finally:
+                self._last_request_completed = time.monotonic()
 
     async def test_connection(self) -> bool:
         """Test if we can connect and authenticate to the device."""
@@ -284,6 +306,7 @@ class WeishauptApiClient:
             Dict mapping key -> parsed response value dict
         """
         results = {}
+        failed_batches = 0
 
         # Split into batches of MAX_PARAMS_PER_REQUEST
         for batch_start in range(0, len(params), MAX_PARAMS_PER_REQUEST):
@@ -321,14 +344,17 @@ class WeishauptApiClient:
                 response = await self._post(payload)
             except WeishauptApiError as err:
                 _LOGGER.error("Failed to read batch: %s", err)
+                failed_batches += 1
                 continue
 
             if not response:
                 _LOGGER.warning("Empty response from device for payload: %s", payload)
+                failed_batches += 1
                 continue
 
             if "CAPI" not in response:
                 _LOGGER.warning("No CAPI in response: %s", response)
+                failed_batches += 1
                 continue
 
             response_capi = response["CAPI"]
@@ -395,6 +421,7 @@ class WeishauptApiClient:
                         request_vgs.get(param["key"], ""),
                     )
 
+        self.last_read_failed_batches = failed_batches
         return results
 
     async def read_string_parameter(

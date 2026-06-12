@@ -89,21 +89,9 @@ class WeishauptButtonEntity(CoordinatorEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Trigger the warm-water push by writing 1 to the register."""
         try:
-            success = await self.coordinator.client.write_parameter(
-                mi=self._sensor_def.mi,
-                mx=self._sensor_def.mx,
-                ox=self._sensor_def.ox,
-                os_val=self._sensor_def.os,
-                vs=self._sensor_def.vs,
-                value_int=1,
-            )
+            await self.coordinator.async_enqueue_write(self._sensor_def, 1)
         except Exception as err:
             _LOGGER.error(
                 "Failed to trigger %s: %s", self._sensor_def.key, err
             )
             return
-
-        if success:
-            await self.coordinator.async_request_refresh()
-        else:
-            _LOGGER.debug("Write reported unsuccessful for %s", self._sensor_def.key)

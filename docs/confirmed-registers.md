@@ -32,6 +32,43 @@ MAX_PARAMS_PER_REQUEST = 6
 
 Testing on real hardware showed that larger mixed batches may return `CMD_ERROR` for later frames even when the same registers work correctly in smaller batches.
 
+All CanApiJson HTTP requests should be serialized through one shared client
+lock. The integration waits at least 300 ms between the completion of one HTTP
+request and the start of the next request:
+
+```text
+MIN_REQUEST_GAP_SECONDS = 0.3
+```
+
+Writable entity updates are queued centrally in the coordinator. Rapid changes
+are debounced for 750 ms, repeated pending writes to the same register keep only
+the newest value, and writes to different registers are sent one at a time in
+order. After the final acknowledged write, the integration waits 10 seconds
+before requesting one full coordinator refresh:
+
+```text
+WRITE_DEBOUNCE_SECONDS = 0.75
+POST_WRITE_SETTLE_SECONDS = 10
+```
+
+During pending writes and the post-write settling window, ordinary polling reads
+are skipped and the last-good coordinator data is reused. Strictly acknowledged
+configured target values may be reflected optimistically in coordinator data,
+but actual-state mirrors must wait for a later real poll.
+
+Dynamic read results are merged into a last-good cache. A transient failed or
+empty batch must not remove previously valid values returned by an earlier
+cycle. Network diagnostics keep their separate setup/reload path and 10-minute
+refresh throttle.
+
+Recommended polling intervals:
+
+| Scenario | Recommendation |
+|---|---:|
+| Normal operation without experimental sensors | 30 seconds |
+| Curated experimental sensors enabled | 60 seconds or slower |
+| Extended experimental diagnostics enabled | 120 seconds or slower |
+
 Valid raw zero values must be preserved as measurements.
 
 Examples:

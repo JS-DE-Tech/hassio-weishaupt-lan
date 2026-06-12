@@ -209,6 +209,11 @@ class ConfigFlowTests(unittest.IsolatedAsyncioTestCase):
             )["enable_extended_experimental_wtc_sensors"]
         )
 
+    def test_scan_interval_minimum_is_thirty_seconds(self) -> None:
+        """The scan interval selector should not allow dense polling below 30 seconds."""
+        self.assertEqual(config_flow._scan_interval_default(10), 30)
+        self.assertEqual(config_flow._scan_interval_default(30), 30)
+
     def test_names_schema_and_detected_toggle_defaults(self) -> None:
         """Naming schema should expose detected-name toggle and HK fields."""
         schema = config_flow._names_schema({})

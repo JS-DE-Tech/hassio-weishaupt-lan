@@ -29,7 +29,7 @@
         "step": {
             "init": {
                 "title": "Weishaupt WTC LAN",
-                "description": "Abfrageintervall (10-600 Sekunden) und Anzeigenamen der Heizkreise anpassen.",
+                "description": "Abfrageintervall (30-600 Sekunden) und Anzeigenamen der Heizkreise anpassen.",
                 "data": {
                     "scan_interval": "Abfrageintervall",
                     "hk1_name": "Name Heizkreis 1",

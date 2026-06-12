@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 from datetime import datetime, timedelta, timezone
@@ -108,7 +109,17 @@ class DataUpdateCoordinator:
         return cls
 
     def __init__(self, *args, **kwargs) -> None:
-        pass
+        self.data = None
+        self.update_interval = kwargs.get("update_interval")
+        self.refresh_calls = 0
+
+    def async_set_updated_data(self, data) -> None:
+        """Store updated coordinator data."""
+        self.data = data
+
+    async def async_request_refresh(self) -> None:
+        """Record refresh requests."""
+        self.refresh_calls += 1
 
 
 update_coordinator.DataUpdateCoordinator = DataUpdateCoordinator
@@ -137,6 +148,7 @@ load_module(
 integration = load_module(
     "custom_components.weishaupt_wtc_lan", PACKAGE_ROOT / "__init__.py"
 )
+coordinator_module = sys.modules["custom_components.weishaupt_wtc_lan.coordinator"]
 
 
 class FakeClient:
@@ -243,6 +255,46 @@ class NetworkClient:
         }
 
 
+class WriteQueueClient:
+    """Fake client recording serialized queued writes."""
+
+    def __init__(self) -> None:
+        self.writes: list[dict] = []
+        self.active_writes = 0
+        self.max_active_writes = 0
+        self.params: list[dict] = []
+
+    async def write_parameter(self, **kwargs) -> bool:
+        self.active_writes += 1
+        self.max_active_writes = max(self.max_active_writes, self.active_writes)
+        self.writes.append(kwargs)
+        await asyncio.sleep(0)
+        self.active_writes -= 1
+        return True
+
+    async def read_parameters(self, params: list[dict]) -> dict:
+        self.params = params
+        return {}
+
+
+class SequenceReadClient:
+    """Fake client returning one dynamic read result per coordinator poll."""
+
+    def __init__(self, responses: list[tuple[dict, int]]) -> None:
+        self.responses = list(responses)
+        self.last_read_failed_batches = 0
+        self.params: list[dict] = []
+
+    async def read_parameters(self, params: list[dict]) -> dict:
+        self.params = params
+        if not self.responses:
+            self.last_read_failed_batches = 0
+            return {}
+        response, failed_batches = self.responses.pop(0)
+        self.last_read_failed_batches = failed_batches
+        return response
+
+
 class EntityRegistry:
     """Minimal entity registry."""
 
@@ -294,8 +346,172 @@ class DeviceRegistry:
         self.removed.append(device_id)
 
 
+def sensor_definition_by_key(key: str):
+    """Return a sensor definition by key."""
+    return next(item for item in sensors.ALL_SENSORS if item.key == key)
+
+
 class IntegrationHelperTests(unittest.IsolatedAsyncioTestCase):
     """Test setup helper behavior."""
+
+    def setUp(self) -> None:
+        """Use short write timings for tests."""
+        self._original_write_debounce = coordinator_module.WRITE_DEBOUNCE_SECONDS
+        self._original_post_write_settle = coordinator_module.POST_WRITE_SETTLE_SECONDS
+        coordinator_module.WRITE_DEBOUNCE_SECONDS = 0.01
+        coordinator_module.POST_WRITE_SETTLE_SECONDS = 0.03
+
+    def tearDown(self) -> None:
+        """Restore production write timings."""
+        coordinator_module.WRITE_DEBOUNCE_SECONDS = self._original_write_debounce
+        coordinator_module.POST_WRITE_SETTLE_SECONDS = self._original_post_write_settle
+
+    async def test_quick_repeated_writes_to_same_register_are_coalesced(self) -> None:
+        """Only the newest pending value for the same register should be sent."""
+        client = WriteQueueClient()
+        sensor_def = sensor_definition_by_key("sg_systembetriebsart")
+        coordinator = integration.WeishauptDataUpdateCoordinator(
+            hass=object(),
+            client=client,
+            sensor_definitions=[sensor_def],
+        )
+
+        await coordinator.async_enqueue_write(sensor_def, 1)
+        await coordinator.async_enqueue_write(sensor_def, 3)
+        await asyncio.sleep(0.05)
+
+        self.assertEqual(len(client.writes), 1)
+        self.assertEqual(client.writes[0]["value_int"], 3)
+        self.assertEqual(coordinator.data[sensor_def.key]["value_int"], 3)
+
+    async def test_different_register_writes_are_sent_serially_in_order(self) -> None:
+        """Different target registers should keep insertion order and not overlap."""
+        client = WriteQueueClient()
+        first = sensor_definition_by_key("sg_systembetriebsart")
+        second = sensor_definition_by_key("sg_betriebsart_hk1_vorgabe")
+        coordinator = integration.WeishauptDataUpdateCoordinator(
+            hass=object(),
+            client=client,
+            sensor_definitions=[first, second],
+        )
+
+        await coordinator.async_enqueue_write(first, 1)
+        await coordinator.async_enqueue_write(second, 2)
+        await asyncio.sleep(0.05)
+
+        self.assertEqual(
+            [item["ox"] for item in client.writes],
+            [first.ox, second.ox],
+        )
+        self.assertEqual(client.max_active_writes, 1)
+
+    async def test_write_settle_requests_one_delayed_refresh(self) -> None:
+        """Writes should not request an immediate full refresh."""
+        client = WriteQueueClient()
+        sensor_def = sensor_definition_by_key("sg_systembetriebsart")
+        coordinator = integration.WeishauptDataUpdateCoordinator(
+            hass=object(),
+            client=client,
+            sensor_definitions=[sensor_def],
+        )
+
+        await coordinator.async_enqueue_write(sensor_def, 1)
+        await asyncio.sleep(0.02)
+        self.assertEqual(coordinator.refresh_calls, 0)
+
+        await asyncio.sleep(0.05)
+        self.assertEqual(coordinator.refresh_calls, 1)
+
+    async def test_new_write_resets_post_write_settle_timer(self) -> None:
+        """A later write should cancel the earlier delayed refresh timer."""
+        client = WriteQueueClient()
+        first = sensor_definition_by_key("sg_systembetriebsart")
+        second = sensor_definition_by_key("sg_betriebsart_hk1_vorgabe")
+        coordinator = integration.WeishauptDataUpdateCoordinator(
+            hass=object(),
+            client=client,
+            sensor_definitions=[first, second],
+        )
+
+        await coordinator.async_enqueue_write(first, 1)
+        await asyncio.sleep(0.025)
+        await coordinator.async_enqueue_write(second, 2)
+        await asyncio.sleep(0.02)
+        self.assertEqual(coordinator.refresh_calls, 0)
+
+        await asyncio.sleep(0.05)
+        self.assertEqual(coordinator.refresh_calls, 1)
+
+    async def test_polling_is_skipped_while_writes_pending_or_settling(self) -> None:
+        """Ordinary polling should return cached data during write protection windows."""
+        coordinator_module.POST_WRITE_SETTLE_SECONDS = 0.2
+        client = WriteQueueClient()
+        sensor_def = sensor_definition_by_key("sg_systembetriebsart")
+        coordinator = integration.WeishauptDataUpdateCoordinator(
+            hass=object(),
+            client=client,
+            sensor_definitions=[sensor_def],
+            static_data={"network_ip_address": {"value_int": 0x0A000001}},
+        )
+        coordinator.data = {"cached": {"value_int": 1}}
+
+        await coordinator.async_enqueue_write(sensor_def, 1)
+        pending_data = await coordinator._async_update_data()
+        for _ in range(10):
+            if sensor_def.key in (coordinator.data or {}):
+                break
+            await asyncio.sleep(0.01)
+        settling_data = await coordinator._async_update_data()
+
+        self.assertEqual(client.params, [])
+        self.assertEqual(pending_data["cached"]["value_int"], 1)
+        self.assertEqual(settling_data[sensor_def.key]["value_int"], 1)
+
+    async def test_acknowledged_target_value_is_reflected_without_mirrors(self) -> None:
+        """ACKed target values should update only the written target key."""
+        client = WriteQueueClient()
+        target = sensor_definition_by_key("sg_systembetriebsart")
+        mirror = sensor_definition_by_key("sg_systembetriebsart_aktuell")
+        coordinator = integration.WeishauptDataUpdateCoordinator(
+            hass=object(),
+            client=client,
+            sensor_definitions=[target, mirror],
+        )
+
+        await coordinator.async_enqueue_write(target, 3)
+        await asyncio.sleep(0.05)
+
+        self.assertEqual(coordinator.data[target.key]["value_int"], 3)
+        self.assertNotIn(mirror.key, coordinator.data)
+
+    async def test_previous_dynamic_values_survive_failed_later_batch(self) -> None:
+        """A later partial read failure should retain previous valid dynamic values."""
+        sensor_def = sensor_definition_by_key("sg_systembetriebsart")
+        client = SequenceReadClient(
+            [
+                (
+                    {
+                        sensor_def.key: {
+                            "value_int": 2,
+                            "value_hex": "02",
+                        }
+                    },
+                    0,
+                ),
+                ({}, 1),
+            ]
+        )
+        coordinator = integration.WeishauptDataUpdateCoordinator(
+            hass=object(),
+            client=client,
+            sensor_definitions=[sensor_def],
+        )
+
+        first = await coordinator._async_update_data()
+        second = await coordinator._async_update_data()
+
+        self.assertEqual(first[sensor_def.key]["value_int"], 2)
+        self.assertEqual(second[sensor_def.key]["value_int"], 2)
 
     async def test_probe_experimental_registers_keeps_only_supported_candidates(self) -> None:
         """Setup probe should keep CMD_RESPONSE candidates and skip errors."""
