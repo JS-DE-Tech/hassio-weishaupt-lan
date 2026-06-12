@@ -195,7 +195,7 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_read_string_parameter_decodes_supported_device_name(self) -> None:
         """String read should decode a supported NUL-terminated device name."""
-        value_hex = "57454d2d534700" + ("00" * 10)
+        value_hex = "57454d2d5347202000" + ("00" * 7)
         client = SequenceResponseClient(
             [
                 capi_batch_response(

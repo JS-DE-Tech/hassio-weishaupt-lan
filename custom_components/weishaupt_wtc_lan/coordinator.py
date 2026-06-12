@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -15,6 +16,8 @@ from .heating_circuits import build_polled_sensor_definitions
 from .sensors import ExperimentalWtcRegister, WeishauptSensorDefinition
 
 _LOGGER = logging.getLogger(__name__)
+
+NETWORK_REFRESH_INTERVAL = timedelta(minutes=10)
 
 DEBUG_STATE_KEYS = {
     "sg_betriebsart_hk1_vorgabe",
@@ -52,6 +55,7 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         experimental_wtc_registers: list[ExperimentalWtcRegister] | None = None,
         extended_experimental_wtc_registers: list[ExperimentalWtcRegister] | None = None,
         static_data: dict[str, Any] | None = None,
+        network_refresh_callback: Callable[[], Awaitable[dict[str, Any]]] | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -74,9 +78,49 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             extended_experimental_wtc_registers or []
         )
         self.static_data = static_data or {}
+        self.network_refresh_callback = network_refresh_callback
+        self._last_network_refresh = (
+            datetime.now(timezone.utc) if network_refresh_callback is not None else None
+        )
+
+    async def async_refresh_network_diagnostics(
+        self,
+        *,
+        force: bool = False,
+        now: datetime | None = None,
+    ) -> bool:
+        """Refresh cached network diagnostics when due."""
+        if self.network_refresh_callback is None:
+            return False
+        now = now or datetime.now(timezone.utc)
+        if (
+            not force
+            and self._last_network_refresh is not None
+            and now - self._last_network_refresh < NETWORK_REFRESH_INTERVAL
+        ):
+            return False
+
+        try:
+            network_data = await self.network_refresh_callback()
+        except Exception:  # noqa: BLE001 - keep heating refresh stable on optional diagnostics failure.
+            _LOGGER.debug("Network diagnostics refresh failed", exc_info=True)
+            self._last_network_refresh = now
+            return False
+
+        if network_data:
+            self.static_data.update(network_data)
+            _LOGGER.debug(
+                "Updated cached network diagnostics: keys=%s",
+                sorted(network_data),
+            )
+        else:
+            _LOGGER.debug("Network diagnostics refresh returned no values")
+        self._last_network_refresh = now
+        return bool(network_data)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the Weishaupt device."""
+        await self.async_refresh_network_diagnostics()
         params = []
         for sensor_def in self.polled_sensor_definitions:
             params.append(

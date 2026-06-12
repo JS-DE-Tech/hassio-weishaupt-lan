@@ -24,7 +24,7 @@
 - Kept experimental polling disabled by default.
 - Probed `wtc_waermeleistung_vpt` adaptively with `VS=4` first and `VS=2` fallback for devices that use a shorter response.
 - Added confidence, probable-unit and probable-scale metadata for selected experimental WTC candidates.
-- Network diagnostics are read once during setup/reload and kept as static coordinator data, including optional read-only GETS strings and a derived MAC address.
+- Network diagnostics are read immediately during setup/reload, refreshed at most once every 10 minutes, and kept as last-good cached coordinator data.
 - Retained the historic HK2 technical key prefix `hk_` for backward compatibility.
 
 ### Fixed
@@ -36,6 +36,7 @@
 - Corrected confirmed network IP-mode labels: raw `1` is `Manuell`, raw `3` is `Automatisch (DHCP)`.
 - Replaced the previous optional hostname probe with the confirmed read-only `06/00/250E/00 VS=16 GETS` device-name query; `06/00/2505/00` is not used.
 - Skipped derived MAC-address diagnostics safely when any confirmed MAC component is missing.
+- Kept the network device display name fixed as `Weishaupt Systemgeraet Netzwerk` while exposing the native Home Assistant configuration URL.
 
 ## 0.4.1 - 2026-06-10
 

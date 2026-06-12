@@ -239,6 +239,22 @@ async def _async_probe_network_sensors(
     client: WeishauptApiClient,
 ) -> tuple[list[WeishauptSensorDefinition], dict[str, Any]]:
     """Probe optional read-only network diagnostics."""
+    static_data = await _async_read_network_diagnostics(client)
+    supported = [
+        sensor_def for sensor_def in NETWORK_SENSORS if sensor_def.key in static_data
+    ]
+
+    _LOGGER.debug(
+        "Detected supported static network diagnostics: keys=%s",
+        sorted(static_data),
+    )
+    return supported, static_data
+
+
+async def _async_read_network_diagnostics(
+    client: WeishauptApiClient,
+) -> dict[str, Any]:
+    """Read static network diagnostics and return successful values."""
     numeric_definitions = [
         sensor_def
         for sensor_def in NETWORK_SENSORS
@@ -256,10 +272,10 @@ async def _async_probe_network_sensors(
         for sensor_def in numeric_definitions
     ]
     results = await client.read_parameters(params)
-    supported = [sensor_def for sensor_def in numeric_definitions if sensor_def.key in results]
     static_data: dict[str, Any] = {
         sensor_def.key: results[sensor_def.key]
-        for sensor_def in supported
+        for sensor_def in numeric_definitions
+        if sensor_def.key in results
     }
 
     optional_string_definitions = [
@@ -268,6 +284,15 @@ async def _async_probe_network_sensors(
         if sensor_def.key in NETWORK_OPTIONAL_STRING_KEYS
     ]
     for string_def in optional_string_definitions:
+        _LOGGER.debug(
+            "Attempting optional network string probe key=%s address=%02X/%02X/%04X/%02X VS=%s",
+            string_def.key,
+            string_def.mi,
+            string_def.mx,
+            string_def.ox,
+            string_def.os,
+            string_def.vs,
+        )
         try:
             string_data = await client.read_string_parameter(
                 mi=string_def.mi,
@@ -278,9 +303,24 @@ async def _async_probe_network_sensors(
             )
         except AttributeError:
             string_data = None
-        if string_data and str(string_data.get("value_string") or "").strip():
-            supported.append(string_def)
+        cmd = string_data.get("cmd") if string_data else None
+        value_string = str(string_data.get("value_string") or "").strip() if string_data else ""
+        _LOGGER.debug(
+            "Optional network string probe result key=%s cmd=%s decoded_length=%s",
+            string_def.key,
+            cmd,
+            len(value_string),
+        )
+        if string_data and value_string:
+            string_data["value_string"] = value_string
             static_data[string_def.key] = string_data
+            _LOGGER.debug("Created optional network string diagnostic key=%s", string_def.key)
+        else:
+            _LOGGER.debug(
+                "Skipped optional network string diagnostic key=%s reason=%s",
+                string_def.key,
+                "empty_or_unsupported",
+            )
 
     mac_params = [
         {
@@ -297,32 +337,27 @@ async def _async_probe_network_sensors(
     mac_components: list[int] = []
     for sensor_def in NETWORK_MAC_COMPONENT_SENSORS:
         data = mac_results.get(sensor_def.key)
-        if data is None or data.get("value_int") is None:
+        raw_value = data.get("value_int") if data is not None else None
+        if raw_value is None or not 0 <= raw_value <= 0xFF:
             mac_components = []
             break
-        mac_components.append(data["value_int"] & 0xFF)
+        mac_components.append(raw_value)
     mac_address = format_mac_address(mac_components)
-    mac_def = next(
-        (
-            sensor_def
-            for sensor_def in NETWORK_SENSORS
-            if sensor_def.key == NETWORK_MAC_ADDRESS_KEY
-        ),
-        None,
+    _LOGGER.debug(
+        "Network MAC diagnostic probe valid_components=%s",
+        len(mac_components),
     )
-    if mac_address is not None and mac_def is not None:
-        supported.append(mac_def)
+    if mac_address is not None:
         static_data[NETWORK_MAC_ADDRESS_KEY] = {
             "value_int": 0,
             "value_hex": "".join(f"{component:02x}" for component in mac_components),
             "value_string": mac_address,
         }
+        _LOGGER.debug("Created derived network MAC diagnostic")
+    else:
+        _LOGGER.debug("Skipped derived network MAC diagnostic reason=incomplete_or_invalid")
 
-    _LOGGER.debug(
-        "Detected supported static network diagnostics: keys=%s",
-        sorted(static_data),
-    )
-    return supported, static_data
+    return static_data
 
 
 def _signed_value(raw_value: int, value_size: int) -> int:
@@ -898,6 +933,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         experimental_wtc_registers=experimental_wtc_registers,
         extended_experimental_wtc_registers=extended_experimental_wtc_registers,
         static_data=static_data,
+        network_refresh_callback=lambda: _async_read_network_diagnostics(client),
     )
 
     await coordinator.async_config_entry_first_refresh()

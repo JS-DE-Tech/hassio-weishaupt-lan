@@ -389,15 +389,24 @@ UI write address and is not used.
 `Zertifikat-CN` is probed with `06/00/2511/00 VS=50 GETS` and is also skipped
 safely when unsupported or empty.
 
-The six MAC components are probed only during setup or reload. The integration
-exposes one derived `MAC-Adresse` diagnostic in `XX-XX-XX-XX-XX-XX` format and
-does not create visible component entities. If any component is missing, the
-derived MAC entity is skipped safely.
+The six MAC components are probed during setup/reload and during the throttled
+network-diagnostics synchronization. The integration exposes one derived
+`MAC-Adresse` diagnostic in `XX-XX-XX-XX-XX-XX` format and does not create
+visible component entities. If any component is missing or invalid during the
+initial read, the derived MAC entity is skipped safely. If a later refresh fails,
+the last successful MAC value is retained.
 
-Network diagnostics are static setup-time values. They are read on setup or
-reload and are not included in recurring coordinator refresh batches. No network
-write support, password-related registers, usernames, cookies, Authorization
-headers, or tokens are exposed.
+Network diagnostics are read immediately on setup or reload, then synchronized
+at most once every 10 minutes outside the ordinary heating-system polling batch.
+Successful values are merged into cached coordinator data; missing optional
+values do not remove previous visible states. No network write support,
+password-related registers, usernames, cookies, Authorization headers, or tokens
+are exposed.
+
+The logical network device keeps the stable `<entry_id>_network` identifier and
+the display name `Weishaupt Systemgeraet Netzwerk`. Its Home Assistant device
+info includes the local configuration URL `http://<configured-host>/` without
+credentials.
 
 ## Derived Device Date and Time
 

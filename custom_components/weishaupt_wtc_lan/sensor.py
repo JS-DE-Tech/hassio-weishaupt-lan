@@ -133,10 +133,7 @@ def _device_name(
     logical_device_names = getattr(coordinator, "logical_device_names", {})
     suffix = device_suffix_for_sensor(sensor_def)
     if suffix == NETWORK_DEVICE_SUFFIX:
-        return logical_device_names.get(
-            NETWORK_DEVICE_SUFFIX,
-            "Weishaupt Systemgerät Netzwerk",
-        )
+        return "Weishaupt Systemgerät Netzwerk"
     if sensor_def.key in WARM_WATER_SENSOR_KEYS:
         return logical_device_names.get(
             WeishauptDeviceGroup.WW.value,
@@ -162,6 +159,16 @@ def _device_model(group: WeishauptDeviceGroup, sensor_def: WeishauptSensorDefini
         suffix,
         DEVICE_GROUP_MODELS.get(group, "Unknown"),
     )
+
+
+def _configuration_url(entry: ConfigEntry, sensor_def: WeishauptSensorDefinition) -> str | None:
+    """Return the local web UI URL for the network diagnostics device."""
+    if device_suffix_for_sensor(sensor_def) != NETWORK_DEVICE_SUFFIX:
+        return None
+    host = str(getattr(entry, "data", {}).get("host", "")).strip()
+    if not host:
+        return None
+    return f"http://{host}/"
 
 
 def _is_system_device(
@@ -312,6 +319,9 @@ class WeishauptSensorEntity(
         )
         if not _is_system_device(self._entry.entry_id, group, self._sensor_def):
             device_info["via_device"] = _system_device_identifier(self._entry.entry_id)
+        configuration_url = _configuration_url(self._entry, self._sensor_def)
+        if configuration_url is not None:
+            device_info["configuration_url"] = configuration_url
 
         return device_info
 

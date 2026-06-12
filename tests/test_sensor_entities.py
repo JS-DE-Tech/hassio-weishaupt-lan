@@ -398,7 +398,14 @@ class SensorEntityTests(unittest.IsolatedAsyncioTestCase):
             },
             logical_device_names={"network": "GATEWAY0"},
         )
-        entry = SimpleNamespace(entry_id="entry-123")
+        entry = SimpleNamespace(
+            entry_id="entry-123",
+            data={
+                "host": "wem-sg.local",
+                "username": "admin",
+                "password": "secret",
+            },
+        )
 
         ip_entity = sensor.WeishauptSensorEntity(
             coordinator=coordinator,
@@ -429,7 +436,14 @@ class SensorEntityTests(unittest.IsolatedAsyncioTestCase):
             ip_entity.device_info["identifiers"],
             {("weishaupt_wtc_lan", "entry-123_network")},
         )
-        self.assertEqual(ip_entity.device_info["name"], "GATEWAY0")
+        self.assertEqual(ip_entity.device_info["name"], "Weishaupt Systemgerät Netzwerk")
+        self.assertEqual(
+            ip_entity.device_info["configuration_url"],
+            "http://wem-sg.local/",
+        )
+        self.assertTrue(ip_entity.device_info["configuration_url"].endswith("/"))
+        self.assertNotIn("admin", ip_entity.device_info["configuration_url"])
+        self.assertNotIn("secret", ip_entity.device_info["configuration_url"])
 
     def test_network_entities_enabled_and_ip_mode_mapping(self) -> None:
         """Network diagnostics should be enabled and use confirmed IP mode labels."""

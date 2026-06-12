@@ -438,11 +438,13 @@ Entities include:
 - gateway
 - DNS server
 
-Network values are read once during integration setup or reload and are kept as
-static coordinator data. They are not included in recurring refresh batches.
-Network diagnostic entities are enabled by default in the entity registry. IP
-mode raw value `1` is confirmed as `Manuell`; raw value `3` is confirmed as
-`Automatisch (DHCP)`.
+Network values are read immediately during integration setup or reload and are
+kept as cached coordinator data. During normal operation they are synchronized
+at most once every 10 minutes, outside the ordinary heating-system polling
+batch. A temporary network diagnostic read failure keeps the last successful
+value. Network diagnostic entities are enabled by default in the entity
+registry. IP mode raw value `1` is confirmed as `Manuell`; raw value `3` is
+confirmed as `Automatisch (DHCP)`.
 
 The configured device name and certificate CN use optional string-read probes.
 They are created only when the string read returns a non-empty value, and string
@@ -452,6 +454,10 @@ components are available; the six component registers are not visible entities.
 
 No network write support is implemented. Credentials, passwords, usernames,
 cookies, tokens, and HTTP authorization data are not exposed.
+
+The Home Assistant network device exposes a native configuration link to
+`http://<configured-host>/`. Opening that local Systemgeraet web page remains an
+explicit user action and may show the browser's normal authentication prompt.
 
 ### Solar
 

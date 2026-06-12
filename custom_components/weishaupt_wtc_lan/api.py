@@ -118,7 +118,7 @@ def parse_string_vg_response(vg: str) -> dict[str, Any]:
     except ValueError as err:
         raise WeishauptApiError(f"Invalid string VG payload: {vg}") from err
     value_bytes = value_bytes.split(b"\x00", 1)[0]
-    parsed["value_string"] = value_bytes.decode("utf-8", errors="replace")
+    parsed["value_string"] = value_bytes.decode("utf-8", errors="replace").strip()
     return parsed
 
 

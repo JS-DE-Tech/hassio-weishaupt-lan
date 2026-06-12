@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -424,10 +425,35 @@ class IntegrationHelperTests(unittest.IsolatedAsyncioTestCase):
             "00-11-22-AA-BB-CC",
         )
         self.assertIn("network_mac_address", {item.key for item in supported})
+        self.assertLessEqual(max(len(batch) for batch in client.param_batches), 6)
+
+    async def test_network_probe_skips_empty_device_name(self) -> None:
+        """Empty device-name strings should skip the optional diagnostic safely."""
+        client = NetworkClient(
+            string_values={(0x06, 0x00, 0x250E, 0x00, 16): "   "},
+        )
+
+        supported, static_data = await integration._async_probe_network_sensors(
+            client
+        )
+
+        self.assertNotIn("network_hostname", static_data)
+        self.assertNotIn("network_hostname", {item.key for item in supported})
 
     async def test_network_probe_skips_missing_mac_component(self) -> None:
         """Missing MAC components should skip the derived MAC entity safely."""
         client = NetworkClient(mac_components=[0x00, 0x11, 0x22, 0xAA, 0xBB])
+
+        supported, static_data = await integration._async_probe_network_sensors(
+            client
+        )
+
+        self.assertNotIn("network_mac_address", static_data)
+        self.assertNotIn("network_mac_address", {item.key for item in supported})
+
+    async def test_network_probe_skips_invalid_mac_component(self) -> None:
+        """Out-of-range MAC components should skip the derived MAC entity safely."""
+        client = NetworkClient(mac_components=[0x00, 0x11, 0x22, 0xAA, 0xBB, 0x100])
 
         supported, static_data = await integration._async_probe_network_sensors(
             client
@@ -467,6 +493,82 @@ class IntegrationHelperTests(unittest.IsolatedAsyncioTestCase):
             "00-11-22-AA-BB-CC",
         )
         self.assertEqual(coordinator.client.params, [])
+
+    async def test_network_refresh_retains_cached_mac_on_later_failure(self) -> None:
+        """Later MAC refresh failures should keep the last valid cached value."""
+        async def empty_network_refresh() -> dict:
+            return {}
+
+        coordinator = integration.WeishauptDataUpdateCoordinator(
+            hass=object(),
+            client=FakeClient(set()),
+            sensor_definitions=[],
+            static_data={
+                "network_mac_address": {
+                    "value_int": 0,
+                    "value_hex": "001122aabbcc",
+                    "value_string": "00-11-22-AA-BB-CC",
+                },
+            },
+            network_refresh_callback=empty_network_refresh,
+        )
+        coordinator._last_network_refresh = datetime(2026, 6, 12, tzinfo=timezone.utc)
+
+        refreshed = await coordinator.async_refresh_network_diagnostics(
+            now=datetime(2026, 6, 12, 0, 11, tzinfo=timezone.utc)
+        )
+
+        self.assertFalse(refreshed)
+        self.assertEqual(
+            coordinator.static_data["network_mac_address"]["value_string"],
+            "00-11-22-AA-BB-CC",
+        )
+
+    async def test_network_refresh_is_throttled_for_regular_updates(self) -> None:
+        """Network refresh should run at most once per ten minutes."""
+        calls = 0
+
+        async def network_refresh() -> dict:
+            nonlocal calls
+            calls += 1
+            return {"network_dns_server": {"value_int": 0x0A640001, "value_hex": "0a640001"}}
+
+        coordinator = integration.WeishauptDataUpdateCoordinator(
+            hass=object(),
+            client=FakeClient(set()),
+            sensor_definitions=[],
+            static_data={},
+            network_refresh_callback=network_refresh,
+        )
+        coordinator._last_network_refresh = datetime.now(timezone.utc)
+        await coordinator._async_update_data()
+        self.assertEqual(calls, 0)
+        self.assertEqual(coordinator.client.params, [])
+
+        coordinator._last_network_refresh = datetime(2026, 6, 12, tzinfo=timezone.utc)
+
+        skipped = await coordinator.async_refresh_network_diagnostics(
+            now=datetime(2026, 6, 12, 0, 9, 59, tzinfo=timezone.utc)
+        )
+        refreshed = await coordinator.async_refresh_network_diagnostics(
+            now=datetime(2026, 6, 12, 0, 10, 1, tzinfo=timezone.utc)
+        )
+
+        self.assertFalse(skipped)
+        self.assertTrue(refreshed)
+        self.assertEqual(calls, 1)
+        self.assertIn("network_dns_server", coordinator.static_data)
+
+    async def test_network_refresh_runs_on_setup_and_reload_probe(self) -> None:
+        """Setup/reload probes should immediately read network diagnostics."""
+        setup_client = NetworkClient()
+        reload_client = NetworkClient()
+
+        await integration._async_probe_network_sensors(setup_client)
+        await integration._async_probe_network_sensors(reload_client)
+
+        self.assertEqual(len(setup_client.param_batches), 2)
+        self.assertEqual(len(reload_client.param_batches), 2)
 
     async def test_snapshot_export_writes_json_and_csv_without_credentials(self) -> None:
         """Snapshot export should write local files without credentials."""
